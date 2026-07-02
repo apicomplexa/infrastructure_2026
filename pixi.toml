@@ -1,0 +1,24 @@
+[workspace]
+authors = ["apicomplexa <aleksadr.kulish@gmail.com>"]
+channels = ["conda-forge"]
+name = "infrastructure_2026"
+platforms = ["win-64"]
+version = "0.1.0"
+
+[tasks]
+eda = { cmd = "quarto render analysis/eda.qmd --to pdf", description = "Render the EDA report to analysis/eda.pdf" }
+profile = { cmd = "python scripts/profile_data.py", description = "Print a quick profile of the enriched dataset" }
+
+[dependencies]
+python = ">=3.14.6,<3.15"
+pandas = ">=3.0.3,<4"
+numpy = ">=2.5.0,<3"
+openpyxl = ">=3.1.5,<4"
+matplotlib = ">=3.11.0,<4"
+seaborn = ">=0.13.2,<0.14"
+python-pptx = ">=1.0.2,<2"
+jupyter = ">=1.1.1,<2"
+nbclient = ">=0.11.0,<0.12"
+ipykernel = ">=7.3.0,<8"
+quarto = ">=1.9.38,<2"
+poppler = ">=26.5.0,<27"

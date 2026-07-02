@@ -1,0 +1,445 @@
+---
+title: "Urban Infrastructure of Arkhangelsk — Exploratory Data Analysis"
+subtitle: "InfrastructureRF enriched export, 2026-06-28"
+author: "Northern State Medical University — Infrastructure project"
+date: today
+lang: en
+format:
+  pdf:
+    pdf-engine: xelatex
+    mainfont: "Arial"
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    fig-width: 7.2
+    fig-height: 4.4
+    fig-align: center
+    geometry:
+      - margin=2.2cm
+    colorlinks: true
+execute:
+  echo: false
+  warning: false
+  message: false
+jupyter: python3
+---
+
+```{python}
+# | label: setup
+from pathlib import Path
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+import seaborn as sns
+
+# DejaVu Sans is matplotlib's default and ships full Cyrillic coverage, so
+# any Russian labels left on the figures render correctly inside the PDF.
+mpl.rcParams.update({
+    "font.family": "DejaVu Sans",
+    "figure.dpi": 150,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "axes.grid": True,
+    "grid.alpha": 0.25,
+    "axes.titlesize": 12,
+    "axes.titleweight": "bold",
+})
+sns.set_palette("colorblind")
+
+ACCENT = "#2b6cb0"      # useful / neutral primary
+RISK = "#c05621"        # risk factors
+
+DATA = Path("../data/raw/objects_arkhangelsk_2026-06-28_enriched.csv")
+df = pd.read_csv(DATA, sep=";", encoding="utf-8-sig", low_memory=False)
+
+# --- English labels for the report (source data is in Russian) ------------
+CATEGORY_EN = {
+    "Магазины": "Shops",
+    "Организации": "Organizations",
+    "Медицинские организации": "Medical organizations",
+    "Услуги": "Services",
+    "Общепит": "Catering",
+    "Образование": "Education",
+    "Спортивные объекты": "Sport facilities",
+    "Государственные организации": "Government organizations",
+    "фастфуд": "Fast food",
+    "Финансовые организации": "Financial organizations",
+    "Почта и связь": "Post & communications",
+    "Авто": "Auto",
+    "Культура": "Culture",
+    "Досуг и спорт": "Leisure & sport",
+    "Точки продажи табака": "Tobacco outlets",
+    "Гостиницы и туризм": "Hotels & tourism",
+}
+DISTRICT_EN = {
+    "Октябрьский округ": "Oktyabrsky",
+    "Округ Майская горка": "Mayskaya Gorka",
+    "Соломбальский округ": "Solombalsky",
+    "Округ Варавино-Фактория": "Varavino-Faktoriya",
+    "Северный округ": "Severny",
+    "Исакогорский и Цигломенский округа": "Isakogorsky & Tsiglomensky",
+    "Ломоносовский округ": "Lomonosovsky",
+    "Маймаксанский округ": "Maymaksansky",
+}
+VERIF_EN = {
+    "only_osm": "OSM only",
+    "only_2gis": "2GIS only",
+    "confirmed_by_2gis_and_osm": "OSM + 2GIS (confirmed)",
+}
+
+df["category_en"] = df["category_orig"].map(CATEGORY_EN).fillna(df["category_orig"])
+df["district_en"] = df["district_orig"].map(DISTRICT_EN).fillna(df["district_orig"])
+df["verif_en"] = df["verification_status"].map(VERIF_EN).fillna(df["verification_status"])
+
+n_obj = len(df)
+n_cat = df["category_orig"].nunique()
+n_type = df["type_orig"].nunique()
+n_dist = df["district_orig"].nunique()
+
+
+def barh(series, title, xlabel, color=ACCENT, fmt_pct=False, figsize=(7.2, 4.4)):
+    """Horizontal bar chart, largest on top, with value labels."""
+    s = series.sort_values(ascending=True)
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.barh(s.index, s.values, color=color)
+    total = s.sum()
+    for y, v in enumerate(s.values):
+        lbl = f"{v:,} ({v/total*100:.0f}%)" if fmt_pct else f"{v:,}"
+        ax.text(v, y, " " + lbl, va="center", ha="left", fontsize=8)
+    ax.set_xlabel(xlabel)
+    ax.set_title(title)
+    ax.margins(x=0.14)
+    ax.grid(axis="y", visible=False)
+    plt.tight_layout()
+    plt.show()
+```
+
+# Introduction
+
+This report is the **initial exploratory data analysis (EDA)** of the current
+stage of the Northern State Medical University infrastructure project. The
+research question — inherited from the 2022 stage (see
+[`../docs/report_arkhangelsk_2022.md`](../docs/report_arkhangelsk_2022.md)) — is
+**how health-relevant urban infrastructure and health risk factors are
+distributed across the districts (*okrugs*) of Arkhangelsk**.
+
+The data is the enriched, cross-checked export produced by the *ИнфраструктураРФ*
+program (see [`../docs/infrastructure_rf.md`](../docs/infrastructure_rf.md)) for
+Arkhangelsk, dated **2026-06-28**. Each object was collected from open sources
+(OpenStreetMap, 2GIS, and others) and passed through deduplication, verification,
+and address backfilling.
+
+```{python}
+# | label: overview-table
+overview = pd.DataFrame(
+    {
+        "Metric": [
+            "Objects (rows)",
+            "Categories",
+            "Object types",
+            "Districts (okrugs)",
+            "City",
+            "Coordinate coverage",
+            "Address coverage",
+        ],
+        "Value": [
+            f"{n_obj:,}",
+            f"{n_cat}",
+            f"{n_type}",
+            f"{n_dist}",
+            "Arkhangelsk",
+            f"{df['latitude'].notna().mean()*100:.0f}%",
+            f"{df['adress_orig'].notna().mean()*100:.1f}%",
+        ],
+    }
+)
+overview.style.hide(axis="index")
+```
+
+# Data quality and source verification
+
+Every object carries provenance and verification metadata. Confidence is higher
+when an object is confirmed by more than one source.
+
+```{python}
+# | label: fig-verification
+# | fig-cap: "Objects by verification status (data-source confidence)."
+vc = df["verif_en"].value_counts()
+barh(vc, "Verification status", "Number of objects", fmt_pct=True, figsize=(7.2, 2.9))
+```
+
+```{python}
+# | label: verif-note
+n_multi = int((df["provider_count"] >= 2).sum())
+osm_only = int((df["verification_status"] == "only_osm").sum())
+```
+
+Only **`{python} f"{n_multi:,}"`** objects (`{python} f"{n_multi/n_obj*100:.1f}"`%)
+are confirmed by both OpenStreetMap and 2GIS; the remaining objects come from a
+single source, and **`{python} f"{osm_only/n_obj*100:.0f}"`%** rely on
+OpenStreetMap alone. Analyses of absolute counts should therefore be read as
+*lower bounds* — coverage depends heavily on OSM completeness, consistent with
+the 2022 finding that ~64% of objects were found in OSM.
+
+## Field completeness
+
+```{python}
+# | label: fig-completeness
+# | fig-cap: "Share of objects with each attribute populated."
+fields = {
+    "Address": "adress_orig",
+    "Opening hours": "opening_hours_orig",
+    "Phone": "phone_orig",
+    "Website": "website_orig",
+    "Opening date": "opening_date_orig",
+}
+cov = pd.Series({k: df[v].notna().mean() * 100 for k, v in fields.items()})
+cov = cov.sort_values()
+fig, ax = plt.subplots(figsize=(7.2, 3.0))
+ax.barh(cov.index, cov.values, color=ACCENT)
+for y, v in enumerate(cov.values):
+    ax.text(v, y, f" {v:.0f}%", va="center", fontsize=8)
+ax.set_xlim(0, 100)
+ax.set_xlabel("% of objects populated")
+ax.set_title("Attribute completeness")
+ax.grid(axis="y", visible=False)
+plt.tight_layout()
+plt.show()
+```
+
+Addresses and coordinates are nearly complete, so **spatial analysis is
+reliable**. Contact details are partial, and *opening date* is essentially
+absent (<1%) and should be dropped from downstream analysis.
+
+# Category composition
+
+```{python}
+# | label: fig-categories
+# | fig-cap: "Objects by category (English labels; source categories are in Russian)."
+cat = df["category_en"].value_counts()
+barh(cat, "Objects by category", "Number of objects", fmt_pct=True, figsize=(7.2, 5.2))
+```
+
+The export is a **general city inventory**, not only health objects: retail
+(*Shops*), generic *Organizations*, *Services*, and *Catering* dominate.
+Health-relevant categories — *Medical organizations*, *Sport facilities* — and
+explicit risk categories (*Fast food*, *Tobacco outlets*) are present but are a
+minority of the raw export, which motivates the targeted classification in
+Section 6.
+
+## Most frequent object types
+
+```{python}
+# | label: fig-types
+# | fig-cap: "Top 20 object types (type_orig, original Russian labels)."
+typ = df["type_orig"].value_counts().head(20)
+barh(typ, "Top 20 object types", "Number of objects", figsize=(7.2, 5.6))
+```
+
+# Spatial and district distribution
+
+All objects are geocoded within the Arkhangelsk bounding box
+(lat 64.41–64.71, lon 40.25–40.78).
+
+```{python}
+# | label: fig-map
+# | fig-cap: "Spatial distribution of objects, coloured by district (okrug)."
+top_d = df["district_en"].value_counts().index.tolist()
+fig, ax = plt.subplots(figsize=(7.2, 6.0))
+palette = sns.color_palette("colorblind", len(top_d))
+for color, d in zip(palette, top_d):
+    sub = df[df["district_en"] == d]
+    ax.scatter(sub["longitude"], sub["latitude"], s=6, alpha=0.5,
+               color=color, label=f"{d} ({len(sub):,})")
+ax.set_xlabel("Longitude")
+ax.set_ylabel("Latitude")
+ax.set_title("Objects by district")
+ax.set_aspect(1 / np.cos(np.deg2rad(64.55)))  # approx. metric aspect at this latitude
+ax.legend(loc="upper left", fontsize=7, markerscale=2, framealpha=0.9)
+ax.grid(alpha=0.2)
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+# | label: fig-districts
+# | fig-cap: "Objects per district (okrug)."
+dist = df["district_en"].value_counts()
+barh(dist, "Objects by district", "Number of objects", fmt_pct=True, figsize=(7.2, 3.8))
+```
+
+```{python}
+# | label: dist-note
+okt = df["district_en"].value_counts()
+okt_share = okt.iloc[0] / n_obj * 100
+```
+
+::: {.callout-important}
+## Data-quality caveat: district assignment is skewed
+
+**`{python} f"{okt_share:.0f}"`% of all objects are assigned to a single okrug
+(Oktyabrsky).** This is inconsistent with the geography of Arkhangelsk and with
+the 2022 stage, where Oktyabrsky, Lomonosovsky, and Mayskaya Gorka held
+comparable counts. Here *Lomonosovsky* has only 33 objects and *Maymaksansky*
+only 5. The most likely cause is an issue in the automatic okrug-assignment step
+of the export (e.g., a default/fallback okrug). **District-level rates below
+should be treated as provisional and the assignment logic re-validated before
+any substantive spatial conclusions.**
+:::
+
+## Category mix by district
+
+```{python}
+# | label: fig-heatmap
+# | fig-cap: "Category share within each district (column-normalised, %)."
+top_cats = df["category_en"].value_counts().head(10).index
+top_dists = df["district_en"].value_counts().head(6).index
+ct = pd.crosstab(df["category_en"], df["district_en"])
+ct = ct.loc[ct.index.isin(top_cats), ct.columns.isin(top_dists)]
+ct = ct.loc[top_cats.intersection(ct.index), top_dists.intersection(ct.columns)]
+ct_pct = ct.div(ct.sum(axis=0), axis=1) * 100
+fig, ax = plt.subplots(figsize=(7.2, 5.0))
+sns.heatmap(ct_pct, annot=True, fmt=".0f", cmap="Blues", cbar_kws={"label": "% of district"},
+            linewidths=0.5, linecolor="white", ax=ax)
+ax.set_xlabel("")
+ax.set_ylabel("")
+ax.set_title("Category share within district (%)")
+plt.xticks(rotation=30, ha="right")
+plt.tight_layout()
+plt.show()
+```
+
+# Health infrastructure vs. risk factors
+
+Following the project's *"Health + risks"* framing, objects are classified with a
+transparent keyword rule over `category_orig` and `type_orig`. The rule is a
+first-pass heuristic for EDA, not a validated instrument.
+
+```{python}
+# | label: classify
+cat = df["category_orig"].fillna("")
+typ = df["type_orig"].fillna("")
+name = df["name_orig"].fillna("")
+blob = (cat + " | " + typ + " | " + name).str.lower()
+
+def has(s, *words):
+    return s.apply(lambda x: any(w in x for w in words))
+
+health = {
+    "Medical": (cat == "Медицинские организации") | has(typ.str.lower(), "аптека", "поликлин", "больниц", "стоматолог", "врач", "диагност", "лаборатор"),
+    "Sport": (cat == "Спортивные объекты") | has(blob, "спорт", "фитнес", "бассейн", "стадион"),
+}
+risk = {
+    "Fast food": (cat == "фастфуд") | has(typ.str.lower(), "фастфуд"),
+    "Alcohol": has(typ.str.lower(), "алкогол") | has(blob, "алкомаркет", "винный магазин"),
+    "Tobacco": (cat == "Точки продажи табака") | has(blob, "табак", "вейп", "сигарет"),
+    "Bars": has(typ.str.lower(), "бар") & ~has(typ.str.lower(), "барбер"),
+    "Hookah / nightlife": has(blob, "кальян", "ночной клуб", "лаунж"),
+}
+
+health_mask = np.logical_or.reduce(list(health.values()))
+risk_mask = np.logical_or.reduce(list(risk.values()))
+
+hr = pd.DataFrame({
+    "Group": ["Health-supporting"] * len(health) + ["Risk factor"] * len(risk),
+    "Subgroup": list(health.keys()) + list(risk.keys()),
+    "Objects": [int(m.sum()) for m in health.values()] + [int(m.sum()) for m in risk.values()],
+})
+```
+
+```{python}
+# | label: fig-healthrisk
+# | fig-cap: "Health-supporting infrastructure vs. risk factors (heuristic classification)."
+fig, ax = plt.subplots(figsize=(7.2, 4.2))
+colors = [ACCENT if g == "Health-supporting" else RISK for g in hr["Group"]]
+order = hr.sort_values("Objects")
+ax.barh(order["Subgroup"], order["Objects"],
+        color=[ACCENT if g == "Health-supporting" else RISK for g in order["Group"]])
+for y, v in enumerate(order["Objects"]):
+    ax.text(v, y, f" {v:,}", va="center", fontsize=8)
+ax.set_xlabel("Number of objects")
+ax.set_title("Health-supporting (blue) vs. risk factors (orange)")
+ax.grid(axis="y", visible=False)
+ax.margins(x=0.12)
+plt.tight_layout()
+plt.show()
+
+n_health = int(health_mask.sum())
+n_risk = int(risk_mask.sum())
+```
+
+Under this heuristic the export contains **`{python} f"{n_health:,}"`
+health-supporting** objects and **`{python} f"{n_risk:,}"` risk-factor** objects.
+A useful summary indicator for later stages is the **health-to-risk ratio** per
+district, which the next stage can compute once the district-assignment issue
+(Section 5) is resolved.
+
+```{python}
+# | label: tbl-healthrisk-district
+# | tbl-cap: "Health-supporting vs. risk objects by district (provisional — see Section 5 caveat)."
+tmp = df.copy()
+tmp["is_health"] = health_mask
+tmp["is_risk"] = risk_mask
+g = tmp.groupby("district_en").agg(
+    Objects=("name_orig", "size"),
+    Health=("is_health", "sum"),
+    Risk=("is_risk", "sum"),
+)
+g["Health:Risk"] = (g["Health"] / g["Risk"].replace(0, np.nan)).round(2)
+g = g.sort_values("Objects", ascending=False)
+(g.reset_index()
+  .rename(columns={"district_en": "District"})
+  .style.hide(axis="index")
+  .format({"Health:Risk": "{:.2f}"}, na_rep="—"))
+```
+
+# Key findings
+
+1. **Scale & scope.** The 2026 export covers **`{python} f"{n_obj:,}"` objects**
+   across **`{python} f"{n_cat}"` categories** and **`{python} f"{n_type}"`
+   types** — a general city inventory, far larger than the 2,528-object,
+   three-okrug 2022 dataset.
+2. **Source confidence is thin.** Only
+   **`{python} f"{n_multi/n_obj*100:.1f}"`%** of objects are multi-source
+   confirmed; ~**`{python} f"{osm_only/n_obj*100:.0f}"`%** are OSM-only. Counts
+   are lower bounds.
+3. **Geometry is solid, attributes are partial.** Coordinates and addresses are
+   near-complete (good for spatial work); phone/website are partial; *opening
+   date* is unusable (<1%).
+4. **District assignment is broken.** ~**`{python} f"{okt_share:.0f}"`%** of
+   objects fall into one okrug — this must be fixed before any district-level
+   health-accessibility conclusions.
+5. **Health vs. risk is measurable.** A transparent heuristic already separates
+   health-supporting infrastructure from risk factors, giving the next stage a
+   concrete **health-to-risk** indicator to map across the city.
+
+## Recommended next steps
+
+- Re-validate the okrug-assignment step of the export (highest priority).
+- Formalise the health / risk-factor taxonomy (replace the EDA heuristic with a
+  reviewed keyword/category mapping, aligned with the 2022 categories).
+- Enrich source confidence by pulling additional providers (Yandex, 2GIS,
+  administrative data) as in the 2022 methodology.
+- Once districts are fixed, compute per-district, per-capita accessibility and
+  the health-to-risk ratio as the core project output.
+
+---
+
+# Appendix: dataset dictionary {.appendix}
+
+| Column | Meaning |
+| --- | --- |
+| `verification_status` | Source confirmation tier (`only_osm`, `only_2gis`, `confirmed_by_2gis_and_osm`) |
+| `providers` / `provider_count` | Which sources found the object / how many |
+| `verification_comment` | Free-text verification note |
+| `filled_fields` / `missing_fields` | Attributes present / absent after enrichment |
+| `website_check_status` | Result of website reachability check |
+| `matched_source_ids` | Source object IDs matched during dedup |
+| `match_distance_meters` / `match_name_similarity` | Cross-source match geometry / name score |
+| `category_orig` / `type_orig` | Category and fine-grained type (Russian) |
+| `name_orig` | Object name |
+| `city_orig` / `district_orig` / `adress_orig` | Location text fields |
+| `latitude` / `longitude` | Coordinates (WGS84) |
+| `website_orig` / `phone_orig` / `opening_hours_orig` / `opening_date_orig` | Contact & schedule |
+| `enrichment_comment` | Free-text enrichment note |

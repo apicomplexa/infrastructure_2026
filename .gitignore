@@ -1,0 +1,17 @@
+# pixi environments
+.pixi/*
+!.pixi/config.toml
+
+# Quarto intermediates (keep the rendered analysis/eda.pdf)
+/.quarto/
+**/.quarto/
+*.quarto_ipynb
+/analysis/eda_files/
+/analysis/*.tex
+/analysis/*.aux
+/analysis/*.log
+/analysis/*.toc
+
+# Python
+__pycache__/
+*.pyc
