@@ -2,16 +2,35 @@
 .pixi/*
 !.pixi/config.toml
 
-# Quarto intermediates (keep the rendered analysis/eda.pdf)
+# Rendered reports — deliverables, not sources.  Rebuild any of them with the
+# matching pixi task (see README); nothing here is needed to reproduce a render.
+/reports/
+
+# Second and third delivery payloads — kept out of git for bulk (8.6 MB of
+# vendor spreadsheets).  The reports need them: see README, "Obtaining the data".
+/data/raw_v2/
+/data/raw_v3/
+
+# Quarto intermediates
 /.quarto/
 **/.quarto/
+**/*_files/
 *.quarto_ipynb
-/analysis/eda_files/
-/analysis/*.tex
-/analysis/*.aux
-/analysis/*.log
-/analysis/*.toc
+/analysis/**/*.tex
+/analysis/**/*.aux
+/analysis/**/*.log
+/analysis/**/*.toc
+
+# Quarto drops its own .gitignore into every directory it renders in.  Both of
+# its rules are already covered above, so keep those files out of the index.
+/analysis/*/.gitignore
 
 # Python
 __pycache__/
 *.pyc
+
+# Basemap tile cache (contextily; re-downloaded on demand)
+/data/tile_cache/
+
+# Derived match tables — regenerate with `pixi run match-2022`
+/data/processed/
