@@ -1,0 +1,389 @@
+---
+title: "Arkhangelsk Urban Infrastructure — the commercial directory as a third source"
+subtitle: "export_base_688669 profiled, and re-matched against the 2026 export and the 2022 benchmark (2026-08-31)"
+author: "Northern State Medical University — Infrastructure project"
+date: today
+lang: en
+format:
+  pdf:
+    pdf-engine: xelatex
+    mainfont: "Arial"
+    monofont: "Consolas"
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    fig-width: 7.2
+    fig-height: 4.4
+    fig-align: center
+    fig-pos: "H"
+    geometry:
+      - margin=2.2cm
+    colorlinks: true
+execute:
+  echo: false
+  warning: false
+  message: false
+jupyter: python3
+---
+
+```{python}
+# | label: setup
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+from rapidfuzz import fuzz
+from IPython.display import Markdown
+
+# Locate the repository root, so this report may live at any depth under it.
+_root = next(p for p in [Path.cwd(), *Path.cwd().parents]
+             if (p / "pixi.toml").exists())
+sys.path.insert(0, str(_root / "src"))
+from arkhinfra import v3_common as c  # noqa: E402
+from arkhinfra import basecheck as bc  # noqa: E402
+
+mpl.rcParams.update({
+    "font.family": "DejaVu Sans",
+    "figure.dpi": 150,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "axes.grid": True,
+    "grid.alpha": 0.25,
+    "axes.titlesize": 12,
+    "axes.titleweight": "bold",
+})
+
+ACCENT, RISK, GREEN, PURPLE = c.ACCENT, c.RISK, c.GREEN, c.PURPLE
+MIXED, OLD = c.MIXED, c.OLD
+INK = "#1f2933"
+```
+
+```{python}
+# | label: load
+eb = bc.prepare_base()
+v3 = c.load_v3()
+three = bc.prepare_target(v3[v3["okrug_key"].isin(c.OKRUGS_2022)])
+city = bc.prepare_target(v3)
+ref = bc.prepare_target(c.load_ref_2022_local())
+
+geo_three = bc.match_geo(three, eb)
+geo_city = bc.match_geo(city, eb)
+geo_ref = bc.match_geo(ref, eb)
+
+city = city.assign(sim=geo_city["name_sim"])
+three = three.assign(sim=geo_three["name_sim"])
+
+n_eb = len(eb)
+STRONG, WEAK, R = bc.STRONG, bc.WEAK, bc.RADIUS_M
+rate_three = 100 * (geo_three["name_sim"] >= STRONG).mean()
+rate_city = 100 * (geo_city["name_sim"] >= STRONG).mean()
+rate_ref = 100 * (geo_ref["name_sim"] >= STRONG).mean()
+```
+
+# Why this report exists
+
+`reports/v3/eda-v3-validation.pdf` reports that the commercial directory
+corroborates **3.6 %** of the 2026 export's three-okrug records. That figure is
+an artefact of how the join was done, not a property of the data. Re-matched
+properly, the directory corroborates
+**`{python} f"{rate_three:.1f}"` %** of the same records — roughly nine times as
+many.
+
+This report profiles `export_base_688669_zal6mp.xlsx` on its own terms, shows
+where the original join failed, and gives the corrected figures. It does not
+modify the earlier reports; the 3.6 % figure still stands in
+`reports/v3/eda-v3-validation.pdf` and should be read as superseded by this document.
+
+::: {.callout-warning}
+## Do not cite the 3.6 % figure
+
+Three compounding defects each suppressed matches independently — an address
+prefix that never normalised away, exact string equality on names, and blocking
+on the address alone. Sections @sec-defects and @sec-ladder quantify each.
+:::
+
+# What the file is {#sec-what}
+
+```{python}
+# | label: tbl-profile
+# | tbl-cap: "The commercial directory at a glance."
+rows = [
+    ["Records", f"{n_eb:,}", "sheet holds 10,558 rows; row 1 repeats the header"],
+    ["Fields", "25", "a third taxonomy, unrelated to the export's or to 2022's"],
+    ["Distinct rubrics / sub-rubrics", f"{eb['Рубрика'].nunique()} / {eb['Подрубрика'].nunique():,}", "own classification scheme"],
+    ["Coordinates present", f"{eb['latitude'].notna().sum():,}",
+     f"{100 * eb['latitude'].notna().mean():.1f}%, rounded to 3 decimals"],
+    ["Okrug field populated", "0", "unusable; okrug must come from coordinates"],
+    ["Status: active", f"{(eb['Статус'] == 'Действующая').sum():,}", "10 in liquidation"],
+    ["Company type populated", f"{eb['Тип компании'].notna().sum():,}",
+     f"{100 * eb['Тип компании'].notna().mean():.0f}%"],
+]
+Markdown(pd.DataFrame(rows, columns=["Measure", "Value", "Note"]).to_markdown(index=False))
+```
+
+```{python}
+# | label: fig-rubrics
+# | fig-cap: "Top 12 rubrics. The file is shaped like a business directory, not like an infrastructure register."
+s = eb["Рубрика"].value_counts().head(12).sort_values()
+fig, ax = plt.subplots(figsize=(7.2, 4.6))
+ax.barh(s.index, s.values, color=PURPLE)
+for y, v in enumerate(s.values):
+    ax.text(v, y, f" {v:,}", va="center", fontsize=8, color=INK)
+ax.set_xlabel("Records")
+ax.set_title("Commercial directory — top rubrics")
+ax.margins(x=0.18)
+ax.grid(axis="y", visible=False)
+plt.tight_layout()
+plt.show()
+```
+
+The two files describe overlapping but different universes. The directory leads
+with medical services, car service and construction; the 2026 export leads with
+shops. A perfect match rate was never on the cards — but the gap is nothing like
+as wide as 3.6 % implied.
+
+# The three defects {#sec-defects}
+
+## Defect 1 — the administrative address prefix
+
+```{python}
+# | label: tbl-prefix
+# | tbl-cap: "Almost half the directory's addresses carry a prefix the shipped normaliser cannot remove."
+raw = eb["Адрес компании"].fillna("").astype(str)
+pref = raw.str.contains("Архангельская область", regex=False)
+old_norm = eb["Адрес компании"].map(c.norm_address)
+old_keys = set(old_norm) - {""}
+new_keys = set(eb["_addr"]) - {""}
+t_old = set(three["adress_orig"].map(c.norm_address)) - {""}
+t_new = set(three["_addr"]) - {""}
+rows = [
+    ["Directory rows carrying the prefix", f"{pref.sum():,}", f"{100 * pref.mean():.1f}% of the file"],
+    ["Still containing it after normalising", f"{old_norm.str.contains('архангельская').sum():,}", "shipped normaliser"],
+    ["Distinct addresses shared with the export", f"{len(old_keys & t_old):,}",
+     f"{100 * len(old_keys & t_old) / len(t_old):.1f}% — shipped"],
+    ["Same, prefix removed", f"{len(new_keys & t_new):,}",
+     f"{100 * len(new_keys & t_new) / len(t_new):.1f}% — corrected"],
+]
+Markdown(pd.DataFrame(rows, columns=["Measure", "Value", "Note"]).to_markdown(index=False))
+```
+
+`v3_common.norm_address` strips the city with `\bархангельск\b`. The word
+boundary means it never matches **Архангельская** in
+"Архангельская область, Архангельск городской округ, …", so the whole
+administrative prefix survives normalisation:
+
+```{python}
+# | label: tbl-prefix-example
+# | tbl-cap: "The same address under the shipped normaliser and the corrected one."
+ex = raw[pref].head(3).tolist()
+rows = [[s[:52] + "…", c.norm_address(s)[:44], bc.norm_address(s)[:34]] for s in ex]
+Markdown(pd.DataFrame(rows, columns=["Source address", "Shipped normaliser", "Corrected"]).to_markdown(index=False))
+```
+
+## Defect 2 — exact string equality on names
+
+The directory habitually appends a trade descriptor to the business name. Exact
+equality rejects every one of these pairs; they are plainly the same object.
+
+- `Фудзи` — `Фудзи, торговый центр`
+- `Рекольтант` — `Рекольтант, бар русских вин`
+- `Венский пекарь` — `Венский Пекарь, кафе-кондитерская`
+- `Средняя школа No 45` — `Средняя школа № 45`
+- `Детский сад No 54 "Веселые ребята"` — `Веселые ребята, детский сад №54`
+
+## Defect 3 — blocking on the address alone
+
+Even corrected, an address block only finds objects both sources spell the same
+way. Blocking on distance instead — the directory does carry coordinates —
+recovers the rest.
+
+# The same question, asked six ways {#sec-ladder}
+
+```{python}
+# | label: tbl-ladder
+# | tbl-cap: "Corroboration of the 2026 export's three-okrug records, by matching method. Method 1 is what the earlier report used."
+Markdown(bc.method_ladder(three, eb, geo_three).to_markdown(index=False))
+```
+
+```{python}
+# | label: fig-ladder
+# | fig-cap: "The same data under each method. The first bar is the published 3.6% figure."
+lad = bc.method_ladder(three, eb, geo_three)
+vals = [float(x) for x in lad["% of target"]]
+labels = [m.split(". ", 1)[1] for m in lad["Method"]]
+colors = [RISK] + [MIXED] * 3 + [ACCENT, OLD]
+fig, ax = plt.subplots(figsize=(7.2, 3.8))
+y = np.arange(len(vals))[::-1]
+ax.barh(y, vals, color=colors)
+for yy, v in zip(y, vals):
+    ax.text(v, yy, f" {v:.1f}%", va="center", fontsize=8, color=INK)
+ax.set_yticks(y, [l[:46] for l in labels], fontsize=7.5)
+ax.set_xlabel("Share of the 2026 export's three-okrug records corroborated, %")
+ax.set_title("Corroboration by matching method")
+ax.margins(x=0.16)
+ax.grid(axis="y", visible=False)
+plt.tight_layout()
+plt.show()
+```
+
+# Where the threshold belongs {#sec-threshold}
+
+Method 6 (similarity ≥ `{python} f"{WEAK:.2f}"`) is **not** defensible. In that
+band the score is carried by a shared trade descriptor rather than by the
+business name, and the pairs are different objects:
+
+```{python}
+# | label: tbl-falsepos
+# | tbl-cap: "Sample pairs scoring in the 0.85-0.90 band. These are not the same object."
+ebc = eb.dropna(subset=["latitude", "longitude"]).reset_index(drop=True)
+band = three[(three["sim"] >= WEAK) & (three["sim"] < STRONG)]
+g = geo_three.loc[band.index]
+rows = []
+for (_, r), (_, gg) in list(zip(band.iterrows(), g.iterrows()))[:8]:
+    rows.append([str(r["name_orig"])[:34],
+                 str(ebc["Название компании"].iat[int(gg["eb_row"])])[:34],
+                 f"{gg['name_sim']:.2f}", f"{gg['distance_m']:.0f} m"])
+Markdown(pd.DataFrame(rows, columns=["2026 export", "Directory", "Score", "Distance"]).to_markdown(index=False, disable_numparse=True))
+```
+
+At ≥ `{python} f"{STRONG:.2f}"` the pairs hold up:
+
+```{python}
+# | label: tbl-truepos
+# | tbl-cap: "Sample pairs scoring at or above 0.90."
+good = three[three["sim"] >= STRONG].sample(8, random_state=3)
+g2 = geo_three.loc[good.index]
+rows = []
+for (_, r), (_, gg) in zip(good.iterrows(), g2.iterrows()):
+    rows.append([str(r["name_orig"])[:34],
+                 str(ebc["Название компании"].iat[int(gg["eb_row"])])[:34],
+                 f"{gg['name_sim']:.2f}", f"{gg['distance_m']:.0f} m"])
+Markdown(pd.DataFrame(rows, columns=["2026 export", "Directory", "Score", "Distance"]).to_markdown(index=False, disable_numparse=True))
+```
+
+**`{python} f"{STRONG:.2f}"` is the working threshold** for everything below.
+The exact-name rate (method 4) is the conservative floor.
+
+# Corrected corroboration {#sec-results}
+
+```{python}
+# | label: tbl-headline
+# | tbl-cap: "Corroboration by the commercial directory, at each threshold. 'Any within radius' shows why proximity alone proves nothing."
+rows = []
+for tag, g in [("2026 export, 3 okrugs", geo_three), ("2026 export, whole city", geo_city),
+               ("2022 benchmark", geo_ref)]:
+    s = g["name_sim"]
+    rows.append([tag, f"{len(g):,}", f"{100 * g['near'].mean():.1f}%",
+                 f"{100 * (s >= 1.0).mean():.1f}%",
+                 f"{100 * (s >= STRONG).mean():.1f}%"])
+Markdown(pd.DataFrame(rows, columns=["Target", "Records", "Any within radius",
+                                     "Exact name", "Name >= 0.90"]).to_markdown(index=False))
+```
+
+`{python} f"{100 * geo_city['near'].mean():.0f}"` % of export objects have *some*
+directory record within `{python} f"{R:.0f}"` m. That number measures urban
+density, not agreement — it is the same trap the contractor's 94.3 % fell into,
+and it is why the name test does the work here.
+
+```{python}
+# | label: fig-byclass
+# | fig-cap: "Corroboration by 2022-taxonomy class, whole city, at similarity >= 0.90."
+t = (city.assign(hit=city["sim"] >= STRONG)
+     .groupby("category_2022").agg(n=("hit", "size"), hit=("hit", "sum")))
+t["pct"] = 100 * t["hit"] / t["n"]
+t = t.reindex([x for x in c.CLASS_ORDER if x in t.index]).sort_values("pct")
+fig, ax = plt.subplots(figsize=(7.2, 4.0))
+ax.barh(t.index, t["pct"], color=ACCENT)
+for y, (v, n) in enumerate(zip(t["pct"], t["n"])):
+    ax.text(v, y, f" {v:.1f}% (n={n:,})", va="center", fontsize=8, color=INK)
+ax.set_xlabel("Objects corroborated by the directory, %")
+ax.set_title("Corroboration by 2022-taxonomy class")
+ax.margins(x=0.26)
+ax.grid(axis="y", visible=False)
+plt.tight_layout()
+plt.show()
+```
+
+Alcohol shops stand out at the bottom: the directory carries almost none of them.
+That matches the earlier finding that the risk classes are the least corroborated
+part of the export, whichever source is asked.
+
+```{python}
+# | label: tbl-byokrug
+# | tbl-cap: "Corroboration by okrug, whole city, at similarity >= 0.90."
+t2 = (city.assign(hit=city["sim"] >= STRONG)
+      .groupby("okrug_key").agg(Objects=("hit", "size"), Corroborated=("hit", "sum")))
+t2 = t2.sort_values("Objects", ascending=False)
+t2["%"] = (100 * t2["Corroborated"] / t2["Objects"]).map("{:.1f}".format)
+t2["Objects"] = t2["Objects"].map("{:,}".format)
+t2["Corroborated"] = t2["Corroborated"].map("{:,}".format)
+Markdown(t2.to_markdown(disable_numparse=True))
+```
+
+```{python}
+# | label: tbl-reverse
+# | tbl-cap: "The reverse direction: how much of the directory the 2026 export accounts for."
+matched = set(geo_city.loc[geo_city["name_sim"] >= STRONG, "eb_row"]) - {-1}
+rows = [
+    ["Directory records with coordinates", f"{len(ebc):,}", ""],
+    ["Matched by a 2026 export object", f"{len(matched):,}", f"{100 * len(matched) / len(ebc):.1f}%"],
+    ["Not accounted for by the export", f"{len(ebc) - len(matched):,}",
+     f"{100 * (len(ebc) - len(matched)) / len(ebc):.1f}%"],
+]
+Markdown(pd.DataFrame(rows, columns=["Measure", "Records", "Share"]).to_markdown(index=False))
+```
+
+Four fifths of the directory has no counterpart in the export. Most of it is
+office-economy activity — legal, financial, construction, transport firms — that
+the infrastructure export never set out to collect.
+
+# What the file adds, and what it cannot do {#sec-value}
+
+```{python}
+# | label: tbl-fields
+# | tbl-cap: "Fields the directory carries that no other source in this project has."
+rows = []
+for col, label in [("Рейтинг компании в Интернете", "Online rating"),
+                   ("Примерное число отзывов в Интернете", "Approx. review count"),
+                   ("Анализ выручки", "Revenue analysis"),
+                   ("Тип компании", "Company type"),
+                   ("Telegram компании", "Telegram contact"),
+                   ("Заголовок сайта (title)", "Website title")]:
+    nn = eb[col].notna().sum()
+    top = eb[col].dropna().astype(str).value_counts()
+    rows.append([label, f"{nn:,}", f"{100 * nn / n_eb:.0f}%",
+                 f"{top.index[0][:30]} ({top.iloc[0]:,})" if len(top) else "—"])
+Markdown(pd.DataFrame(rows, columns=["Field", "Populated", "%", "Most common value"]).to_markdown(index=False))
+```
+
+The three commercially interesting fields are **categorical, not numeric**.
+`Рейтинг компании в Интернете` takes four values, the most common being
+"Недостаточно данных"; `Примерное число отзывов` likewise, most commonly
+"меньше 10". They cannot support quantitative analysis.
+
+# Caveats {#sec-caveats}
+
+- **The corrected rate is still a floor, not a ceiling.** Objects the directory
+  lists under a franchise name while the export uses a local one stay unmatched,
+  and no name test recovers them.
+- **Chain names inflate the count at the margin.** "Антей, аптека" occurs 14
+  times among the matches; with a `{python} f"{R:.0f}"` m radius in dense retail
+  streets, some of those pairings are coincidental. Read the ≥ 0.90 figure as
+  accurate to a few points, not to a decimal.
+- **The radius is forced.** The directory's coordinates are rounded to three
+  decimals — about ±55 m here — so a 50 m radius, as used against the 2022
+  benchmark, is not available. `{python} f"{R:.0f}"` m is the smallest radius the
+  rounding permits.
+- **No okrug field**, so okrug for directory records was never used; okrug
+  breakdowns in @sec-results come from the export side of each matched pair.
+- **This is corroboration, not verification.** The directory is a commercial
+  aggregator, not a survey. A match means two compilations agree an object
+  exists at a place, which is weaker than independent field observation.
+- **The earlier report's 3.6 % figure remains in print.** No existing report was
+  modified. If `eda-v3-validation.qmd` is ever re-rendered, its
+  `tbl-thirdsource` cell should be replaced with the method used here — it lives
+  in `src/arkhinfra/basecheck.py`, deliberately separate from `src/arkhinfra/v3_common.py`
+  so that the older reports keep producing exactly what they produced before.

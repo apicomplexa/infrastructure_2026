@@ -1,0 +1,398 @@
+---
+title: "Городская инфраструктура Архангельска — коммерческий справочник как третий источник"
+subtitle: "Профиль export_base_688669 и повторное сопоставление с выгрузкой 2026 года и эталоном 2022 года (2026-08-31)"
+author: "СГМУ — проект по городской инфраструктуре"
+date: today
+lang: ru
+format:
+  pdf:
+    pdf-engine: xelatex
+    mainfont: "Arial"
+    sansfont: "Arial"
+    monofont: "Consolas"
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    fig-width: 7.2
+    fig-height: 4.4
+    fig-align: center
+    fig-pos: "H"
+    geometry:
+      - margin=2.2cm
+    colorlinks: true
+execute:
+  echo: false
+  warning: false
+  message: false
+jupyter: python3
+---
+
+```{python}
+# | label: setup
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+from rapidfuzz import fuzz
+from IPython.display import Markdown
+
+# Locate the repository root, so this report may live at any depth under it.
+_root = next(p for p in [Path.cwd(), *Path.cwd().parents]
+             if (p / "pixi.toml").exists())
+sys.path.insert(0, str(_root / "src"))
+from arkhinfra import v3_common as c  # noqa: E402
+from arkhinfra import basecheck as bc  # noqa: E402
+
+mpl.rcParams.update({
+    "font.family": "DejaVu Sans",
+    "figure.dpi": 150,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "axes.grid": True,
+    "grid.alpha": 0.25,
+    "axes.titlesize": 12,
+    "axes.titleweight": "bold",
+})
+
+ACCENT, RISK, GREEN, PURPLE = c.ACCENT, c.RISK, c.GREEN, c.PURPLE
+MIXED, OLD = c.MIXED, c.OLD
+INK = "#1f2933"
+```
+
+```{python}
+# | label: load
+eb = bc.prepare_base()
+v3 = c.load_v3()
+three = bc.prepare_target(v3[v3["okrug_key"].isin(c.OKRUGS_2022)])
+city = bc.prepare_target(v3)
+ref = bc.prepare_target(c.load_ref_2022_local())
+
+geo_three = bc.match_geo(three, eb)
+geo_city = bc.match_geo(city, eb)
+geo_ref = bc.match_geo(ref, eb)
+
+city = city.assign(sim=geo_city["name_sim"])
+three = three.assign(sim=geo_three["name_sim"])
+
+n_eb = len(eb)
+STRONG, WEAK, R = bc.STRONG, bc.WEAK, bc.RADIUS_M
+rate_three = 100 * (geo_three["name_sim"] >= STRONG).mean()
+rate_city = 100 * (geo_city["name_sim"] >= STRONG).mean()
+rate_ref = 100 * (geo_ref["name_sim"] >= STRONG).mean()
+```
+
+# Зачем нужен этот отчёт
+
+В отчёте `reports/v3/eda-v3-validation.pdf` указано, что коммерческий справочник
+подтверждает **3,6 %** записей выгрузки 2026 года по трём округам. Эта цифра —
+артефакт способа сопоставления, а не свойство данных. При корректном
+сопоставлении справочник подтверждает
+**`{python} f"{rate_three:.1f}".replace(".", ",")` %** тех же записей — примерно в девять раз
+больше.
+
+Настоящий отчёт описывает `export_base_688669_zal6mp.xlsx` сам по себе,
+показывает, где именно исходное сопоставление дало сбой, и приводит
+исправленные цифры. Существующие отчёты он не меняет: значение 3,6 % остаётся в
+`reports/v3/eda-v3-validation.pdf`, и его следует считать замещённым настоящим
+документом.
+
+::: {.callout-warning}
+## Не цитируйте значение 3,6 %
+
+Три накладывающихся дефекта подавляли совпадения независимо друг от друга:
+адресный префикс, который не удалялся при нормализации, точное посимвольное
+равенство названий и блокировка только по адресу. Разделы @sec-defects и
+@sec-ladder оценивают каждый из них.
+:::
+
+# Что представляет собой файл {#sec-what}
+
+```{python}
+# | label: tbl-profile
+# | tbl-cap: "Коммерческий справочник в цифрах."
+rows = [
+    ["Records", f"{n_eb:,}", "sheet holds 10,558 rows; row 1 repeats the header"],
+    ["Fields", "25", "a third taxonomy, unrelated to the export's or to 2022's"],
+    ["Distinct rubrics / sub-rubrics", f"{eb['Рубрика'].nunique()} / {eb['Подрубрика'].nunique():,}", "own classification scheme"],
+    ["Coordinates present", f"{eb['latitude'].notna().sum():,}",
+     f"{100 * eb['latitude'].notna().mean():.1f}%, rounded to 3 decimals"],
+    ["Okrug field populated", "0", "unusable; okrug must come from coordinates"],
+    ["Status: active", f"{(eb['Статус'] == 'Действующая').sum():,}", "10 in liquidation"],
+    ["Company type populated", f"{eb['Тип компании'].notna().sum():,}",
+     f"{100 * eb['Тип компании'].notna().mean():.0f}%"],
+]
+Markdown(pd.DataFrame(rows, columns=["Measure", "Value", "Note"]).to_markdown(index=False))
+```
+
+```{python}
+# | label: fig-rubrics
+# | fig-cap: "12 самых частых рубрик. По составу это бизнес-справочник, а не реестр инфраструктуры."
+s = eb["Рубрика"].value_counts().head(12).sort_values()
+fig, ax = plt.subplots(figsize=(7.2, 4.6))
+ax.barh(s.index, s.values, color=PURPLE)
+for y, v in enumerate(s.values):
+    ax.text(v, y, f" {v:,}", va="center", fontsize=8, color=INK)
+ax.set_xlabel("Records")
+ax.set_title("Commercial directory — top rubrics")
+ax.margins(x=0.18)
+ax.grid(axis="y", visible=False)
+plt.tight_layout()
+plt.show()
+```
+
+Два файла описывают пересекающиеся, но разные совокупности. В справочнике
+лидируют медицинские услуги, автосервис и строительство; в выгрузке 2026 года —
+магазины. Полного совпадения ожидать и не приходилось, но разрыв далеко не
+такой, каким его представляли 3,6 %.
+
+# Три дефекта {#sec-defects}
+
+## Дефект 1 — административный префикс в адресе
+
+```{python}
+# | label: tbl-prefix
+# | tbl-cap: "Почти половина адресов справочника несёт префикс, который штатный нормализатор удалить не может."
+raw = eb["Адрес компании"].fillna("").astype(str)
+pref = raw.str.contains("Архангельская область", regex=False)
+old_norm = eb["Адрес компании"].map(c.norm_address)
+old_keys = set(old_norm) - {""}
+new_keys = set(eb["_addr"]) - {""}
+t_old = set(three["adress_orig"].map(c.norm_address)) - {""}
+t_new = set(three["_addr"]) - {""}
+rows = [
+    ["Directory rows carrying the prefix", f"{pref.sum():,}", f"{100 * pref.mean():.1f}% of the file"],
+    ["Still containing it after normalising", f"{old_norm.str.contains('архангельская').sum():,}", "shipped normaliser"],
+    ["Distinct addresses shared with the export", f"{len(old_keys & t_old):,}",
+     f"{100 * len(old_keys & t_old) / len(t_old):.1f}% — shipped"],
+    ["Same, prefix removed", f"{len(new_keys & t_new):,}",
+     f"{100 * len(new_keys & t_new) / len(t_new):.1f}% — corrected"],
+]
+Markdown(pd.DataFrame(rows, columns=["Measure", "Value", "Note"]).to_markdown(index=False))
+```
+
+Функция `v3_common.norm_address` вырезает город регуляркой `\bархангельск\b`.
+Из-за границы слова она никогда не совпадает с **Архангельская** в строке
+«Архангельская область, Архангельск городской округ, …», поэтому весь
+административный префикс переживает нормализацию:
+
+```{python}
+# | label: tbl-prefix-example
+# | tbl-cap: "Один и тот же адрес под штатным и исправленным нормализатором."
+ex = raw[pref].head(3).tolist()
+rows = [[s[:52] + "…", c.norm_address(s)[:44], bc.norm_address(s)[:34]] for s in ex]
+Markdown(pd.DataFrame(rows, columns=["Source address", "Shipped normaliser", "Corrected"]).to_markdown(index=False))
+```
+
+## Дефект 2 — точное посимвольное равенство названий
+
+Справочник систематически дописывает к названию род деятельности. Точное
+равенство отвергает каждую из этих пар, хотя это очевидно один и тот же
+объект.
+
+- `Фудзи` — `Фудзи, торговый центр`
+- `Рекольтант` — `Рекольтант, бар русских вин`
+- `Венский пекарь` — `Венский Пекарь, кафе-кондитерская`
+- `Средняя школа No 45` — `Средняя школа № 45`
+- `Детский сад No 54 "Веселые ребята"` — `Веселые ребята, детский сад №54`
+
+## Дефект 3 — блокировка только по адресу
+
+Даже в исправленном виде блокировка по адресу находит лишь те объекты, которые
+оба источника записали одинаково. Блокировка по расстоянию — координаты в
+справочнике есть — возвращает остальные.
+
+# Один вопрос, заданный шестью способами {#sec-ladder}
+
+```{python}
+# | label: tbl-ladder
+# | tbl-cap: "Подтверждение записей выгрузки 2026 года по трём округам в зависимости от метода сопоставления. Метод 1 — тот, что применялся в предыдущем отчёте."
+Markdown(bc.method_ladder(three, eb, geo_three).to_markdown(index=False))
+```
+
+```{python}
+# | label: fig-ladder
+# | fig-cap: "Одни и те же данные под каждым из методов. Первый столбец — опубликованные 3,6 %."
+lad = bc.method_ladder(three, eb, geo_three)
+vals = [float(x) for x in lad["% of target"]]
+labels = [m.split(". ", 1)[1] for m in lad["Method"]]
+colors = [RISK] + [MIXED] * 3 + [ACCENT, OLD]
+fig, ax = plt.subplots(figsize=(7.2, 3.8))
+y = np.arange(len(vals))[::-1]
+ax.barh(y, vals, color=colors)
+for yy, v in zip(y, vals):
+    ax.text(v, yy, f" {v:.1f}%", va="center", fontsize=8, color=INK)
+ax.set_yticks(y, [l[:46] for l in labels], fontsize=7.5)
+ax.set_xlabel("Share of the 2026 export's three-okrug records corroborated, %")
+ax.set_title("Corroboration by matching method")
+ax.margins(x=0.16)
+ax.grid(axis="y", visible=False)
+plt.tight_layout()
+plt.show()
+```
+
+# Где должен стоять порог {#sec-threshold}
+
+Метод 6 (сходство ≥ `{python} f"{WEAK:.2f}".replace(".", ",")`) **несостоятелен**. В этой полосе
+оценку вытягивает общий род деятельности в названии, а не само название, и пары
+оказываются разными объектами:
+
+```{python}
+# | label: tbl-falsepos
+# | tbl-cap: "Примеры пар с оценкой в полосе 0,85–0,90. Это не один и тот же объект."
+ebc = eb.dropna(subset=["latitude", "longitude"]).reset_index(drop=True)
+band = three[(three["sim"] >= WEAK) & (three["sim"] < STRONG)]
+g = geo_three.loc[band.index]
+rows = []
+for (_, r), (_, gg) in list(zip(band.iterrows(), g.iterrows()))[:8]:
+    rows.append([str(r["name_orig"])[:34],
+                 str(ebc["Название компании"].iat[int(gg["eb_row"])])[:34],
+                 f"{gg['name_sim']:.2f}", f"{gg['distance_m']:.0f} m"])
+Markdown(pd.DataFrame(rows, columns=["2026 export", "Directory", "Score", "Distance"]).to_markdown(index=False, disable_numparse=True))
+```
+
+При ≥ `{python} f"{STRONG:.2f}".replace(".", ",")` пары выдерживают проверку:
+
+```{python}
+# | label: tbl-truepos
+# | tbl-cap: "Примеры пар с оценкой 0,90 и выше."
+good = three[three["sim"] >= STRONG].sample(8, random_state=3)
+g2 = geo_three.loc[good.index]
+rows = []
+for (_, r), (_, gg) in zip(good.iterrows(), g2.iterrows()):
+    rows.append([str(r["name_orig"])[:34],
+                 str(ebc["Название компании"].iat[int(gg["eb_row"])])[:34],
+                 f"{gg['name_sim']:.2f}", f"{gg['distance_m']:.0f} m"])
+Markdown(pd.DataFrame(rows, columns=["2026 export", "Directory", "Score", "Distance"]).to_markdown(index=False, disable_numparse=True))
+```
+
+**`{python} f"{STRONG:.2f}".replace(".", ",")` — рабочий порог** для всего дальнейшего. Доля
+точных совпадений по названию (метод 4) служит консервативной нижней
+границей.
+
+# Исправленные показатели подтверждения {#sec-results}
+
+```{python}
+# | label: tbl-headline
+# | tbl-cap: "Подтверждение коммерческим справочником при каждом пороге. Столбец «любая запись в радиусе» показывает, почему одна лишь близость ничего не доказывает."
+rows = []
+for tag, g in [("2026 export, 3 okrugs", geo_three), ("2026 export, whole city", geo_city),
+               ("2022 benchmark", geo_ref)]:
+    s = g["name_sim"]
+    rows.append([tag, f"{len(g):,}", f"{100 * g['near'].mean():.1f}%",
+                 f"{100 * (s >= 1.0).mean():.1f}%",
+                 f"{100 * (s >= STRONG).mean():.1f}%"])
+Markdown(pd.DataFrame(rows, columns=["Target", "Records", "Any within radius",
+                                     "Exact name", "Name >= 0.90"]).to_markdown(index=False))
+```
+
+У `{python} f"{100 * geo_city['near'].mean():.0f}"` % объектов выгрузки в
+радиусе `{python} f"{R:.0f}"` м есть *какая-нибудь* запись справочника. Это
+измеряет плотность городской застройки, а не согласие источников — ровно та
+ловушка, в которую попали 94,3 % подрядчика. Именно поэтому здесь всю работу
+делает проверка названия.
+
+```{python}
+# | label: fig-byclass
+# | fig-cap: "Подтверждение по классам таксономии 2022, весь город, при сходстве >= 0,90."
+t = (city.assign(hit=city["sim"] >= STRONG)
+     .groupby("category_2022").agg(n=("hit", "size"), hit=("hit", "sum")))
+t["pct"] = 100 * t["hit"] / t["n"]
+t = t.reindex([x for x in c.CLASS_ORDER if x in t.index]).sort_values("pct")
+fig, ax = plt.subplots(figsize=(7.2, 4.0))
+ax.barh(t.index, t["pct"], color=ACCENT)
+for y, (v, n) in enumerate(zip(t["pct"], t["n"])):
+    ax.text(v, y, f" {v:.1f}% (n={n:,})", va="center", fontsize=8, color=INK)
+ax.set_xlabel("Objects corroborated by the directory, %")
+ax.set_title("Corroboration by 2022-taxonomy class")
+ax.margins(x=0.26)
+ax.grid(axis="y", visible=False)
+plt.tight_layout()
+plt.show()
+```
+
+В самом низу выделяются алкогольные магазины: справочник почти не содержит их.
+Это согласуется с прежним выводом о том, что классы риска — наименее
+подтверждённая часть выгрузки, каким источником ни проверяй.
+
+```{python}
+# | label: tbl-byokrug
+# | tbl-cap: "Подтверждение по округам, весь город, при сходстве >= 0,90."
+t2 = (city.assign(hit=city["sim"] >= STRONG)
+      .groupby("okrug_key").agg(Objects=("hit", "size"), Corroborated=("hit", "sum")))
+t2 = t2.sort_values("Objects", ascending=False)
+t2["%"] = (100 * t2["Corroborated"] / t2["Objects"]).map("{:.1f}".format)
+t2["Objects"] = t2["Objects"].map("{:,}".format)
+t2["Corroborated"] = t2["Corroborated"].map("{:,}".format)
+Markdown(t2.to_markdown(disable_numparse=True))
+```
+
+```{python}
+# | label: tbl-reverse
+# | tbl-cap: "Обратное направление: какую часть справочника покрывает выгрузка 2026 года."
+matched = set(geo_city.loc[geo_city["name_sim"] >= STRONG, "eb_row"]) - {-1}
+rows = [
+    ["Directory records with coordinates", f"{len(ebc):,}", ""],
+    ["Matched by a 2026 export object", f"{len(matched):,}", f"{100 * len(matched) / len(ebc):.1f}%"],
+    ["Not accounted for by the export", f"{len(ebc) - len(matched):,}",
+     f"{100 * (len(ebc) - len(matched)) / len(ebc):.1f}%"],
+]
+Markdown(pd.DataFrame(rows, columns=["Measure", "Records", "Share"]).to_markdown(index=False))
+```
+
+Четыре пятых справочника не имеют соответствия в выгрузке. В основном это
+офисная экономика — юридические, финансовые, строительные и транспортные
+компании, — которую инфраструктурная выгрузка и не собиралась собирать.
+
+# Что файл добавляет и чего он не может {#sec-value}
+
+```{python}
+# | label: tbl-fields
+# | tbl-cap: "Поля справочника, которых нет ни в одном другом источнике проекта."
+rows = []
+for col, label in [("Рейтинг компании в Интернете", "Online rating"),
+                   ("Примерное число отзывов в Интернете", "Approx. review count"),
+                   ("Анализ выручки", "Revenue analysis"),
+                   ("Тип компании", "Company type"),
+                   ("Telegram компании", "Telegram contact"),
+                   ("Заголовок сайта (title)", "Website title")]:
+    nn = eb[col].notna().sum()
+    top = eb[col].dropna().astype(str).value_counts()
+    rows.append([label, f"{nn:,}", f"{100 * nn / n_eb:.0f}%",
+                 f"{top.index[0][:30]} ({top.iloc[0]:,})" if len(top) else "—"])
+Markdown(pd.DataFrame(rows, columns=["Field", "Populated", "%", "Most common value"]).to_markdown(index=False))
+```
+
+Три коммерчески интересных поля **категориальные, а не числовые**. Поле
+`Рейтинг компании в Интернете` принимает четыре значения, самое частое —
+«Недостаточно данных»; `Примерное число отзывов` устроено так же, чаще всего это
+«меньше 10». Количественный анализ на них построить нельзя.
+
+# Оговорки {#sec-caveats}
+
+- **Исправленная доля — по-прежнему нижняя, а не верхняя граница.** Объекты,
+  которые справочник ведёт под франшизным названием, а выгрузка — под местным,
+  остаются несопоставленными, и никакая проверка названий их не вернёт.
+- **Сетевые названия немного завышают счёт.** «Антей, аптека» встречается среди
+  совпадений 14 раз; при радиусе `{python} f"{R:.0f}"` м на плотных торговых
+  улицах часть таких пар случайна. Значение при ≥ 0,90 следует читать с
+  точностью до нескольких процентных пунктов, а не до десятой доли.
+- **Радиус навязан данными.** Координаты справочника округлены до трёх знаков —
+  здесь это около ±55 м, — поэтому радиус 50 м, применённый к эталону 2022 года,
+  недоступен. `{python} f"{R:.0f}"` м — наименьший радиус, который допускает это
+  округление.
+- **Поля округа нет**, поэтому округ для записей справочника не использовался;
+  разрезы по округам в @sec-results берутся со стороны выгрузки в каждой
+  сопоставленной паре.
+- **Это подтверждение, а не верификация.** Справочник — коммерческий агрегатор,
+  а не полевое обследование. Совпадение означает, что две компиляции согласны в
+  существовании объекта в данном месте, а это слабее независимого наблюдения на
+  местности.
+- **Значение 3,6 % из предыдущего отчёта остаётся напечатанным.** Ни один
+  существующий отчёт не изменялся. Если `eda-v3-validation.qmd` когда-нибудь
+  будут пересобирать, ячейку `tbl-thirdsource` следует заменить на метод из
+  настоящего отчёта — он живёт в `src/arkhinfra/basecheck.py`, намеренно отделённом от
+  `src/arkhinfra/v3_common.py`, чтобы прежние отчёты продолжали выдавать ровно то, что
+  выдавали раньше.

@@ -1,0 +1,561 @@
+---
+title: "Arkhangelsk Urban Infrastructure — independent validation of the third delivery"
+subtitle: "The 2026 export re-checked against the 2022 benchmark, without relying on the contractor's comparison (2026-08-31)"
+author: "Northern State Medical University — Infrastructure project"
+date: today
+lang: en
+format:
+  pdf:
+    pdf-engine: xelatex
+    mainfont: "Arial"
+    monofont: "Consolas"
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    fig-width: 7.2
+    fig-height: 4.4
+    fig-align: center
+    fig-pos: "H"
+    geometry:
+      - margin=2.2cm
+    colorlinks: true
+execute:
+  echo: false
+  warning: false
+  message: false
+jupyter: python3
+---
+
+```{python}
+# | label: setup
+import sys
+import unicodedata
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+from IPython.display import Markdown
+
+# Locate the repository root, so this report may live at any depth under it.
+_root = next(p for p in [Path.cwd(), *Path.cwd().parents]
+             if (p / "pixi.toml").exists())
+sys.path.insert(0, str(_root / "src"))
+from arkhinfra import v3_common as c    # noqa: E402
+from arkhinfra import match_2022 as m   # noqa: E402
+
+mpl.rcParams.update({
+    "font.family": "DejaVu Sans",   # full Cyrillic coverage for figure labels
+    "figure.dpi": 150,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "axes.grid": True,
+    "grid.alpha": 0.25,
+    "axes.titlesize": 12,
+    "axes.titleweight": "bold",
+})
+
+ACCENT, RISK, GREEN, PURPLE = c.ACCENT, c.RISK, c.GREEN, c.PURPLE
+MIXED, OLD = c.MIXED, c.OLD
+
+# Tier hues are assigned in this fixed order and never cycled; every chart that
+# uses them also carries a legend or direct labels, so identity is never colour
+# alone (the palette's worst adjacent pair sits in the CVD floor band).
+TIER_ORDER = ["exact", "probable", "gps_only", "unmatched"]
+TIER_LABEL = {
+    "exact": "Exact (name >= 0.90)",
+    "probable": "Probable (0.75-0.90)",
+    "gps_only": "GPS only (name fails)",
+    "unmatched": "Unmatched",
+}
+TIER_COLOR = {"exact": GREEN, "probable": ACCENT, "gps_only": PURPLE, "unmatched": RISK}
+
+PROC = c.PROC
+local = pd.read_csv(PROC / "match_2022_local.csv", sep=";", encoding="utf-8-sig")
+vendor = pd.read_csv(PROC / "match_2022_vendor.csv", sep=";", encoding="utf-8-sig")
+sens = pd.read_csv(PROC / "match_2022_sensitivity.csv", sep=";", encoding="utf-8-sig")
+
+for d in (local, vendor):
+    d["tier"] = pd.Categorical(d["tier"], categories=TIER_ORDER, ordered=True)
+
+
+def tier_counts(d):
+    return d["tier"].value_counts().reindex(TIER_ORDER, fill_value=0)
+
+
+def recall_pct(d):
+    t = tier_counts(d)
+    return 100 * (t["exact"] + t["probable"]) / len(d)
+
+
+def incl_gps_pct(d):
+    t = tier_counts(d)
+    return 100 * (t["exact"] + t["probable"] + t["gps_only"]) / len(d)
+
+
+TL, TV = tier_counts(local), tier_counts(vendor)
+R_LOCAL, R_VENDOR = recall_pct(local), recall_pct(vendor)
+G_VENDOR = incl_gps_pct(vendor)
+```
+
+```{python}
+# | label: load-sources
+# The contractor's own reported results, for the cross-check.
+vend_summary = pd.read_csv(c.RAW2 / "итоги_сравнения_3_округа.csv",
+                           sep=";", encoding="utf-8-sig")
+svodka = pd.read_excel(c.V2_CMP, sheet_name="Сводка")
+svodka_map = dict(zip(svodka["Показатель"], svodka["Значение"]))
+
+v3 = c.load_v3()
+three = v3[v3["okrug_key"].isin(c.OKRUGS_2022)].copy()
+ref_local = c.load_ref_2022_local()
+```
+
+# Why this report exists
+
+The second delivery shipped a record comparison in which the contractor reported
+that **94.3 %** of the 2022 objects were found in the 2026 export. This report
+re-derives that number from the raw files, using an independently written
+matcher, and reaches a different answer.
+
+The two numbers are both arithmetically correct. They measure different things,
+and the difference is the finding.
+
+::: {.callout-note appearance="simple"}
+**Headline.** Of the 2022 benchmark's objects, the third-delivery export
+reproduces **`{python} f"{R_LOCAL:.1f}"` %** as the *same business at the same
+place*. The contractor's 94.3 % counts a 2022 object as found whenever *any*
+2026 object sits within the search radius, whether or not it is the same
+business. Their confirmed-match tier is sound; their probable-match tier is
+largely coordinate proximity.
+:::
+
+# Method
+
+The matcher (`src/arkhinfra/match_2022.py`, run via `pixi run match-2022`) is a
+re-implementation, not a re-reading of the contractor's workbook:
+
+- **Block.** Candidate 2026 records within **50 m** of the 2022 record
+  (haversine).
+- **Score.** Fuzzy name similarity over normalised names, using rapidfuzz's
+  `WRatio`. `token_set_ratio` was rejected because it returns 1.0 whenever one
+  name's token set is a subset of the other's, so "Magnit" and "Magnit Cosmetic"
+  would score a perfect match; it is still computed and stored so the choice can
+  be audited.
+- **Rank.** By name similarity, then address similarity, then proximity.
+- **Tier.** `exact` at name >= 0.90; `probable` at 0.75-0.90; `gps_only` when
+  candidates exist but no name clears the bar; `unmatched` when nothing lies
+  within the radius.
+
+Names are casefolded and stripped of quotes, punctuation and legal-form tokens
+(`ООО`, `ИП`, and generic nouns such as `магазин`); addresses are reduced to
+street and house number. Recall counts `exact + probable` only.
+
+Two benchmarks are used throughout, because two versions of the 2022 document
+exist (@sec-etalons):
+
+- **Etalon A** — `data/raw/objects_3_districts_2022.xlsx`, 1,753 rows, the copy
+  held in this repository.
+- **Etalon B** — the `Документ 1` sheet of the contractor's comparison workbook,
+  2,293 rows.
+
+# The headline number {#sec-headline}
+
+```{python}
+# | label: tbl-headline
+# | tbl-cap: "Match outcome under the independent matcher, both benchmarks."
+tbl = pd.DataFrame({
+    "Etalon A (1,753)": TL,
+    "% A": (100 * TL / len(local)).round(1),
+    "Etalon B (2,293)": TV,
+    "% B": (100 * TV / len(vendor)).round(1),
+})
+tbl.index = [TIER_LABEL[i] for i in tbl.index]
+tbl.index.name = "Tier"
+Markdown(tbl.to_markdown())
+```
+
+Recall (`exact + probable`) is **`{python} f"{R_LOCAL:.1f}"` %** on etalon A and
+**`{python} f"{R_VENDOR:.1f}"` %** on etalon B — the two benchmarks agree, so the
+figure is not an artefact of which 2022 file is used.
+
+```{python}
+# | label: fig-outcome
+# | fig-cap: "Match outcome per okrug, both benchmarks. Segments are labelled where they exceed 4% of the bar."
+fig, axes = plt.subplots(1, 2, figsize=(7.2, 3.6), sharey=True)
+for ax, (d, name) in zip(axes, [(local, "Etalon A (1,753)"), (vendor, "Etalon B (2,293)")]):
+    ct = pd.crosstab(d["okrug_key"], d["tier"]).reindex(columns=TIER_ORDER, fill_value=0)
+    ct = ct.loc[ct.sum(axis=1).sort_values().index]
+    left = np.zeros(len(ct))
+    for t in TIER_ORDER:
+        vals = ct[t].to_numpy()
+        ax.barh(ct.index, vals, left=left, color=TIER_COLOR[t],
+                label=TIER_LABEL[t], height=0.62)
+        for y, (v, l) in enumerate(zip(vals, left)):
+            if v > 0.04 * ct.sum(axis=1).to_numpy()[y]:
+                ax.text(l + v / 2, y, f"{v:,}", ha="center", va="center",
+                        fontsize=7, color="white")
+        left = left + vals
+    ax.set_title(name, fontsize=10)
+    ax.set_xlabel("Objects")
+    ax.grid(axis="y", visible=False)
+axes[0].legend(loc="lower right", fontsize=6.5, framealpha=0.92)
+plt.tight_layout(); plt.show()
+```
+
+Recall is flat across the three okrugs — 66.1 %, 64.0 % and 62.3 % on etalon A —
+so nothing here resembles the okrug skew that disfigured the first delivery.
+
+# Reconciling with the contractor's 94.3 % {#sec-reconcile}
+
+```{python}
+# | label: tbl-crosscheck
+# | tbl-cap: "The contractor's reported result against this report's independent figures, per okrug (etalon B, the same 2,293 rows they used)."
+rows = []
+name_map = {"Октябрьский округ": "Oktyabrsky",
+            "Ломоносовский округ": "Lomonosovsky",
+            "Округ Майская горка": "Maiskaya Gorka"}
+for _, r in vend_summary[vend_summary["Округ"] != "ВСЕГО"].iterrows():
+    ok = name_map[r["Округ"]]
+    sub = vendor[vendor["okrug_key"] == ok]
+    rows.append({
+        "Okrug": ok,
+        "Rows": int(r["Строк в исходном документе"]),
+        "Vendor found %": float(r["Доля найденных, %"]),
+        "Mine, incl. GPS-only %": round(incl_gps_pct(sub), 1),
+        "Mine, recall %": round(recall_pct(sub), 1),
+    })
+tot = {
+    "Okrug": "TOTAL",
+    "Rows": len(vendor),
+    "Vendor found %": 94.3,
+    "Mine, incl. GPS-only %": round(G_VENDOR, 1),
+    "Mine, recall %": round(R_VENDOR, 1),
+}
+cross = pd.DataFrame(rows + [tot])
+Markdown(cross.to_markdown(index=False))
+```
+
+The third column and the fourth reproduce each other to within about one
+percentage point. That is the reconciliation: **the contractor's "found" is this
+report's `exact + probable + gps_only`** — i.e. a 2022 object counts as found
+when some 2026 object lies within the radius, irrespective of its name.
+
+```{python}
+# | label: tbl-vendor-tiers
+# | tbl-cap: "The contractor's own status against this report's tiers, row by row (etalon B). Their confirmed tier is sound; their probable tier is mostly proximity."
+ct = pd.crosstab(vendor["Статус сравнения"], vendor["tier"])
+ct = ct.reindex(columns=TIER_ORDER, fill_value=0)
+ct.columns = [TIER_LABEL[x].split(" (")[0] for x in ct.columns]
+ct.index = ["Probable match", "Not found", "Confirmed match"]
+ct.index.name = "Contractor's status"
+med = vendor.groupby("Статус сравнения")["name_sim"].median()
+ct["Median name sim."] = [round(med.get("Вероятное совпадение", np.nan), 3),
+                          round(med.get("Не найдено", np.nan), 3),
+                          round(med.get("Совпадение", np.nan), 3)]
+Markdown(ct.to_markdown())
+```
+
+Read the table by row:
+
+- **Confirmed match** (1,168 rows) — median name similarity **1.00**, and 1,012
+  of them land in this report's `exact` tier. This tier is trustworthy.
+- **Probable match** (995 rows) — median name similarity **0.514**. 569 fall
+  into `gps_only`: a 2026 object nearby whose name does not agree. This tier
+  cannot support a claim that the object was found.
+- **Not found** (130 rows) — 80 agree with this report's `unmatched`.
+
+Their run used a 60 m tolerance and a 0.86 name threshold with probable-match
+mode enabled, per the workbook's `Сводка` sheet. The tolerance is close to the
+50 m used here; the divergence comes from what the probable tier is allowed to
+count, not from the radius.
+
+# Sensitivity to the thresholds {#sec-sensitivity}
+
+```{python}
+# | label: fig-sensitivity
+# | fig-cap: "Recall across the radius x name-threshold grid (etalon A). The dashed line is the contractor's reported 94.3%."
+fig, ax = plt.subplots(figsize=(7.2, 3.6))
+radii = sorted(sens["radius_m"].unique())
+thr = sorted(sens["name_threshold"].unique())
+width = 0.26
+colors = [GREEN, ACCENT, PURPLE]
+x = np.arange(len(radii))
+for k, (t, col) in enumerate(zip(thr, colors)):
+    vals = [sens[(sens.radius_m == r) & (sens.name_threshold == t)]["recall_pct"].iloc[0]
+            for r in radii]
+    pos = x + (k - 1) * width
+    ax.bar(pos, vals, width * 0.92, color=col, label=f"name >= {t:.2f}")
+    for xi, v in zip(pos, vals):
+        ax.text(xi, v + 1.2, f"{v:.1f}", ha="center", fontsize=7.5)
+ax.axhline(94.3, ls="--", lw=1.2, color=RISK)
+ax.text(len(radii) - 0.55, 95.5, "contractor: 94.3%", color=RISK, fontsize=8, ha="right")
+ax.set_xticks(x, [f"{int(r)} m" for r in radii])
+ax.set_xlabel("Blocking radius"); ax.set_ylabel("Recall, %")
+ax.set_ylim(0, 104); ax.set_title("Recall is robust to the matching parameters")
+ax.grid(axis="x", visible=False)
+ax.legend(fontsize=8, loc="lower right", framealpha=0.92)
+plt.tight_layout(); plt.show()
+```
+
+Recall moves over a span of roughly nine percentage points across the whole
+3 × 3 grid, from 61.8 % at the strictest cell to **70.9 %** at the most
+permissive one (150 m, name >= 0.75). Even that most generous setting falls more
+than twenty points short of 94.3 %, so the gap is not a matter of tuning.
+
+# Recall by category — the risk classes fare worst {#sec-category}
+
+```{python}
+# | label: fig-recall-category
+# | fig-cap: "Recall by the 2022 source category (etalon A). Counts in brackets."
+by_cat = pd.crosstab(local["category_orig"], local["tier"]).reindex(columns=TIER_ORDER, fill_value=0)
+by_cat["n"] = by_cat.sum(axis=1)
+by_cat["recall"] = 100 * (by_cat["exact"] + by_cat["probable"]) / by_cat["n"]
+by_cat = by_cat.sort_values("recall")
+labels = [f"{c.CATEGORY_EN.get(i, i)} ({int(n)})" for i, n in zip(by_cat.index, by_cat["n"])]
+risk_set = {"Спецмагазины алкоголя", "Точки продажи табака", "Пром. Объекты"}
+colors = [RISK if i in risk_set else ACCENT for i in by_cat.index]
+
+fig, ax = plt.subplots(figsize=(7.2, 3.8))
+ax.barh(labels, by_cat["recall"], color=colors, height=0.62)
+for y, v in enumerate(by_cat["recall"]):
+    ax.text(v + 1.2, y, f"{v:.1f}%", va="center", fontsize=8)
+ax.axvline(R_LOCAL, ls="--", lw=1, color=MIXED)
+ax.text(R_LOCAL + 1, -0.75, f"overall {R_LOCAL:.1f}%", color=MIXED, fontsize=7.5)
+ax.set_xlabel("Recall, %"); ax.set_xlim(0, 100)
+ax.set_title("Health infrastructure survives; risk objects do not")
+ax.grid(axis="y", visible=False)
+handles = [plt.Rectangle((0, 0), 1, 1, color=RISK), plt.Rectangle((0, 0), 1, 1, color=ACCENT)]
+ax.legend(handles, ["Risk classes", "Other classes"], fontsize=8, loc="lower right")
+plt.tight_layout(); plt.show()
+```
+
+The ordering confirms, independently, what the second delivery reported:
+medical organisations are reproduced at **86.5 %**, while tobacco outlets
+(**34.8 %**), sport facilities (**42.0 %**) and alcohol shops (**49.1 %**) sit at
+the bottom. Industrial objects score zero, but on only ten records.
+
+This matters for the study's substance: the classes on which the health-versus-risk
+comparison depends are precisely the ones the 2026 export reproduces least
+reliably.
+
+# What `gps_only` actually is {#sec-gpsonly}
+
+The 541 `gps_only` records on etalon A are not matcher failures. Inspection
+shows them to be genuine tenant turnover:
+
+```{python}
+# | label: tbl-gps-samples
+# | tbl-cap: "Sample gps_only pairs: a 2026 object stands within metres of the 2022 one, under a different name."
+g = local[local["tier"] == "gps_only"].copy()
+samp = g.nsmallest(8, "distance_m")[["name_orig", "v3_name_orig", "distance_m", "name_sim", "addr_sim"]]
+samp.columns = ["2022 object", "2026 object", "Dist, m", "Name sim.", "Addr sim."]
+samp["Dist, m"] = samp["Dist, m"].round(1)
+samp["Name sim."] = samp["Name sim."].round(2)
+samp["Addr sim."] = samp["Addr sim."].round(2)
+Markdown(samp.to_markdown(index=False))
+```
+
+Two counts settle the interpretation:
+
+- Only **3 of 541** have a token-set similarity >= 0.90, so almost none are true
+  matches that the scorer missed.
+- **388 of 541** have address similarity >= 0.90 — the same address, a different
+  business.
+
+Between 2022 and 2026 the premises stayed; the occupant changed. Counting these
+as "found", as the contractor's probable tier does, converts retail churn into
+apparent continuity.
+
+# The two 2022 benchmarks differ {#sec-etalons}
+
+```{python}
+# | label: tbl-etalons
+# | tbl-cap: "Etalon A against etalon B, on normalised name+address keys."
+ka = set(zip(ref_local["name_orig"].map(c.norm_name),
+             ref_local["adress_orig"].map(c.norm_address)))
+ven_raw = m.normalise_vendor(c.load_ref_2022_vendor())
+kb = set(zip(ven_raw["name_orig"].map(c.norm_name),
+             ven_raw["adress_orig"].map(c.norm_address)))
+et = pd.DataFrame({
+    "Metric": ["Rows", "Unique name+address keys", "Duplicate rows",
+               "Keys shared with the other", "Keys unique to this file"],
+    "Etalon A": [len(ref_local), len(ka), len(ref_local) - len(ka),
+                 len(ka & kb), len(ka - kb)],
+    "Etalon B": [len(ven_raw), len(kb), len(ven_raw) - len(kb),
+                 len(ka & kb), len(kb - ka)],
+})
+Markdown(et.to_markdown(index=False))
+```
+
+The 540-row gap between the two files is mostly **duplication, not content**.
+Etalon B carries `{python} f"{len(ven_raw) - len(kb):,}"` duplicate name+address
+rows against etalon A's `{python} f"{len(ref_local) - len(ka):,}"`. On distinct
+keys the two are nearly the same document: **99.8 %** of etalon A's keys appear
+in etalon B, with only 4 keys unique to A and 90 unique to B (113 rows, weighted
+towards tobacco outlets and catering in Oktyabrsky).
+
+Etalon A is therefore an almost-strict subset of etalon B. Recall is
+indistinguishable between them (@sec-headline), so the choice of benchmark does
+not drive the conclusion — but any *count* taken from etalon B is inflated by its
+duplicates.
+
+# Growth: what the 2026 export adds {#sec-growth}
+
+```{python}
+# | label: tbl-growth
+# | tbl-cap: "The 2026 export in the three 2022 okrugs, split by whether it reproduces a 2022 object."
+res = m.match(ref_local, three)
+lab = m.reverse_coverage(three, res)
+three["bench"] = lab
+gt = pd.crosstab(three["okrug_key"], three["bench"])
+gt.loc["TOTAL"] = gt.sum()
+gt["Total"] = gt.sum(axis=1)
+# The share is rendered as text so the count columns stay clean integers (a
+# numeric percentage column would float-format the whole table), and numparse
+# is disabled on it so tabulate does not strip the trailing zero back off.
+gt["New, %"] = (100 * gt["New in v3"] / gt["Total"]).map("{:.1f}".format)
+gt.index.name = "Okrug"
+Markdown(gt.to_markdown(disable_numparse=[4]))
+```
+
+The 2026 export holds 5,614 objects across the three okrugs against the 2022
+benchmark's 1,753 — a threefold expansion, of which **81 %** is new material.
+The reproduced count (1,065) is lower than the matched count (1,126) because
+several 2022 records match the same 2026 object, which the duplicate keys in
+both files make inevitable.
+
+# Map: provenance and benchmark, side by side {#sec-map}
+
+```{python}
+# | label: fig-map
+# | fig-cap: "The three 2022 okrugs. Left: which sources carry each 2026 object. Right: which 2026 objects reproduce a 2022 object."
+fig, axes = plt.subplots(1, 2, figsize=(7.2, 4.4))
+
+prov_order = ["confirmed_by_2gis_and_osm", "only_2gis", "only_osm"]
+prov_color = {"confirmed_by_2gis_and_osm": GREEN, "only_2gis": PURPLE, "only_osm": ACCENT}
+for s in prov_order:
+    sub = three[three["verification_status"] == s]
+    axes[0].scatter(sub["longitude"], sub["latitude"], s=5, alpha=0.55,
+                    color=prov_color[s], label=f"{c.STATUS_EN[s]} ({len(sub):,})")
+axes[0].set_title("Source provenance", fontsize=10)
+
+bench_color = {"Reproduced from 2022": GREEN, "New in v3": OLD}
+for b in ["New in v3", "Reproduced from 2022"]:
+    sub = three[three["bench"] == b]
+    axes[1].scatter(sub["longitude"], sub["latitude"], s=5, alpha=0.55,
+                    color=bench_color[b], label=f"{b} ({len(sub):,})")
+axes[1].set_title("2022 benchmark outcome", fontsize=10)
+
+for ax in axes:
+    ax.set_xlabel("Longitude")
+    ax.set_aspect(1 / np.cos(np.deg2rad(64.54)))
+    ax.legend(loc="upper left", fontsize=6, markerscale=2.2, framealpha=0.9)
+    try:
+        # Tiles are cached in data/tile_cache, so only the first render needs
+        # internet access; offline we fall back to the plain scatter.
+        import contextily as ctx
+        tile_cache = c.ROOT / "data" / "tile_cache"
+        tile_cache.mkdir(exist_ok=True)
+        ctx.set_cache_dir(str(tile_cache))
+        ctx.add_basemap(ax, crs="EPSG:4326", source=ctx.providers.CartoDB.Positron,
+                        attribution_size=4)
+        ax.grid(visible=False)
+    except Exception:
+        ax.grid(alpha=0.2)
+axes[0].set_ylabel("Latitude")
+plt.tight_layout(); plt.show()
+```
+
+The two panels answer different questions and should not be conflated. Dual-source
+confirmation is sparse everywhere (@sec-thirdsource), while the reproduced-from-2022
+objects concentrate in the centre — the 2022 study's own footprint — and the new
+material fills in the periphery.
+
+# The third source cannot corroborate much {#sec-thirdsource}
+
+```{python}
+# | label: tbl-thirdsource
+# | tbl-cap: "Corroboration of the 2022 benchmark and of the 2026 export by export_base_688669."
+def nfc(s):
+    return unicodedata.normalize("NFC", str(s)) if pd.notna(s) else s
+
+# load_export_base() already normalises the header row to NFC; the values are
+# folded here as well so a decomposed data cell cannot silently miss a join.
+eb = c.load_export_base()
+eb_names = eb["Название компании"].map(nfc).map(c.norm_name)
+eb_addr = eb["Адрес компании"].map(nfc).map(c.norm_address)
+eb_keys = set(zip(eb_names, eb_addr))
+eb_nameset = set(eb_names)
+
+ref_pairs = ka
+ref_names = set(ref_local["name_orig"].map(c.norm_name))
+v3_pairs = set(zip(three["name_orig"].map(c.norm_name),
+                   three["adress_orig"].map(c.norm_address)))
+v3_names = set(three["name_orig"].map(c.norm_name))
+
+ts = pd.DataFrame({
+    "Compared against export_base": ["2022 benchmark (etalon A)", "2026 export, 3 okrugs"],
+    "Keys": [len(ref_pairs), len(v3_pairs)],
+    "Name+address hit": [len(ref_pairs & eb_keys), len(v3_pairs & eb_keys)],
+    "%": [round(100 * len(ref_pairs & eb_keys) / len(ref_pairs), 1),
+          round(100 * len(v3_pairs & eb_keys) / len(v3_pairs), 1)],
+    "Name-only hit": [len(ref_names & eb_nameset), len(v3_names & eb_nameset)],
+    "% ": [round(100 * len(ref_names & eb_nameset) / len(ref_names), 1),
+           round(100 * len(v3_names & eb_nameset) / len(v3_names), 1)],
+})
+Markdown(ts.to_markdown(index=False))
+```
+
+`export_base_688669` is a commercial company directory of 10,557 records shipped
+with this delivery. As a third opinion it is weak, and two hard limits prevent it
+from doing more:
+
+- **No okrug field.** `Район города` is empty for **all 10,557 records**. Okrug
+  can only be recovered from coordinates.
+- **Coordinates are rounded to three decimals** — about ±55 m at this latitude,
+  coarser than the 50 m blocking radius itself. The file therefore cannot
+  participate in GPS matching at all; it can only be joined on name and address.
+
+On that basis it corroborates 3.6 % of the 2026 export's three-okrug records by
+name and address, and 19.6 % by name alone. It is a supplementary directory, not
+an independent check.
+
+# Caveats {#sec-caveats}
+
+- **Duplicate keys in every file.** Etalon A carries 50 duplicate
+  name+address pairs, the 2026 export 62, etalon B roughly 515. Any per-record
+  count is approximate at that order of magnitude.
+- **Okrug spelling in the 2022 file is inconsistent** — `Майская Горка` (245
+  rows) and `Майская горка` (2). Both fold onto one key here; a naive
+  `value_counts()` on the raw column splits them.
+- **`gps_only` is a finding, not a residual.** It means a 2026 object exists at
+  the location under a different name. Whether that is churn or a naming
+  discrepancy is decided per record, and the counts in @sec-gpsonly argue for
+  churn.
+- **Generic names cap the achievable recall.** 88 of the 1,753 etalon-A records
+  carry a placeholder name (`Продовольственный магазин`, `Киоск`,
+  `Продуктовый магазин`). Their recall is **46.6 %** against **65.6 %** for the
+  1,665 properly named records. A name-based matcher cannot identify them; this
+  is a defect of the 2022 source, not of the 2026 export.
+- **Recall is measured against the whole export**, not the three-okrug subset.
+  Restricting the target to the three okrugs moves recall only from 64.6 % to
+  64.2 %, the difference being 2022 objects whose 2026 counterpart is filed under
+  a neighbouring okrug.
+- The matcher takes each 2022 record's **original** coordinates, never the
+  contractor's corrected ones, since matching on a coordinate derived from a
+  match would be circular.
+
+# What this means for the study
+
+1. **Use the confirmed tier, not the headline.** Roughly two thirds of the 2022
+   objects are reproduced as the same business at the same place. Plan the
+   longitudinal comparison on that basis, not on 94.3 %.
+2. **Treat the risk classes with particular care.** Tobacco, alcohol and sport
+   are reproduced at 35-49 %, well below the medical class at 86.5 %. A
+   health-versus-risk comparison across 2022 and 2026 inherits that asymmetry and
+   will understate risk exposure unless it is corrected for.
+3. **The 2026 export is a new census, not an update.** 81 % of its content in the
+   three okrugs is new. It should be analysed as a fresh cross-section that
+   overlaps the 2022 one, rather than as a revision of it.

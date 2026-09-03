@@ -1,0 +1,727 @@
+---
+title: "Городская инфраструктура Архангельска — РАД третьей поставки"
+subtitle: "Общегородская выгрузка 2026, перекодировка в таксономию 2022, коммерческий справочник, панель показателей ARKTMED (2026-08-31)"
+author: "СГМУ — проект по городской инфраструктуре"
+date: today
+lang: ru
+format:
+  pdf:
+    pdf-engine: xelatex
+    mainfont: "Arial"
+    sansfont: "Arial"
+    monofont: "Consolas"
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    fig-width: 7.2
+    fig-height: 4.4
+    fig-align: center
+    fig-pos: "H"
+    geometry:
+      - margin=2.2cm
+    colorlinks: true
+execute:
+  echo: false
+  warning: false
+  message: false
+jupyter: python3
+---
+
+```{python}
+# | label: setup
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import seaborn as sns
+from IPython.display import Markdown
+
+# Locate the repository root, so this report may live at any depth under it.
+_root = next(p for p in [Path.cwd(), *Path.cwd().parents]
+             if (p / "pixi.toml").exists())
+sys.path.insert(0, str(_root / "src"))
+from arkhinfra import v3_common as c  # noqa: E402
+
+mpl.rcParams.update({
+    "font.family": "DejaVu Sans",   # full Cyrillic coverage for figure labels
+    "figure.dpi": 150,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "axes.grid": True,
+    "grid.alpha": 0.25,
+    "axes.titlesize": 12,
+    "axes.titleweight": "bold",
+})
+
+ACCENT, RISK, GREEN, PURPLE = c.ACCENT, c.RISK, c.GREEN, c.PURPLE
+MIXED, OLD = c.MIXED, c.OLD
+INK = "#1f2933"
+
+# Provenance keeps a fixed three-hue assignment, never cycled.  The triple was
+# checked for colour-vision separation against the page surface; every chart
+# using it also carries a legend or direct labels, so hue is never the only cue.
+PROV_COLORS = {
+    "Confirmed by 2GIS + OSM": GREEN,
+    "2GIS only": PURPLE,
+    "OSM only": ACCENT,
+}
+PROV_ORDER = ["Confirmed by 2GIS + OSM", "2GIS only", "OSM only"]
+
+
+def barh(series, title, xlabel, color=ACCENT, fmt_pct=False, figsize=(7.2, 4.4)):
+    s = series.sort_values(ascending=True)
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.barh(s.index, s.values, color=color)
+    total = s.sum()
+    for y, v in enumerate(s.values):
+        lbl = f"{v:,} ({v / total * 100:.0f}%)" if fmt_pct else f"{v:,}"
+        ax.text(v, y, " " + lbl, va="center", ha="left", fontsize=8, color=INK)
+    ax.set_xlabel(xlabel)
+    ax.set_title(title)
+    ax.margins(x=0.16)
+    ax.grid(axis="y", visible=False)
+    plt.tight_layout()
+    plt.show()
+```
+
+```{python}
+# | label: load
+v3 = c.load_v3()
+v1 = c.load_v1()
+ref22 = c.load_ref_2022_local()
+
+v3["category_en"] = v3["category_orig"].map(c.CATEGORY_EN).fillna(v3["category_orig"])
+v3["provenance"] = v3["verification_status"].map(c.STATUS_EN)
+
+n_obj = len(v3)
+n_cat = v3["category_orig"].nunique()
+n_type = v3["type_orig"].nunique()
+n_okrug = v3["okrug_key"].nunique()
+
+OKRUG_ORDER = v3["okrug_key"].value_counts().index.tolist()
+three = v3[v3["okrug_key"].isin(c.OKRUGS_2022)]
+```
+
+# Введение
+
+Третья поставка (`data/raw_v3/`, сформирована 2026-08-31) — **не дополнение ко
+второй**. Она полностью заменяет общегородскую выгрузку и не содержит обоих
+артефактов, на которых была построена вторая поставка: книги сравнения записей
+2022↔2026 и её сводки по округам. Вместо них пришли новая общегородская
+выгрузка, коммерческий справочник, не имевший аналогов в прежних поставках, и
+пересобранная панель показателей.
+
+```{python}
+# | label: tbl-delivery
+# | tbl-cap: "Состав поставок. Третья поставка заменяет вторую, а не дополняет её."
+rows = [
+    ["Main object export", "7,228 obj. (city)", "5,257 obj. (3 okrugs)", f"{n_obj:,} obj. (city)"],
+    ["Record comparison vs 2022", "—", "2,293 x 5,257", "— (withdrawn)"],
+    ["Per-okrug comparison summary", "—", "yes", "— (withdrawn)"],
+    ["Commercial directory dump", "—", "—", "10,557 records"],
+    ["ARKTMED indicator panel", "—", "28 ind. / 168 rows", "22 ind. / 65 rows"],
+    ["2GIS provider present", "yes", "no", "yes"],
+]
+Markdown(pd.DataFrame(
+    rows, columns=["Artefact", "1st (raw)", "2nd (raw_v2)", "3rd (raw_v3)"]
+).to_markdown(index=False))
+```
+
+## Главное в этой поставке
+
+- **Дефект отнесения к округам исправлен по всему городу.** В первой выгрузке
+  71 % всех объектов приходился на Октябрьский округ; здесь крупнейший округ
+  держит 35 %, а Исакогорский и Цигломенский — слитые в первой выгрузке в одну
+  метку — разделены.
+- **2ГИС вернулся.** Вторая поставка была только на OSM; здесь 759 объектов
+  имеют покрытие 2ГИС, а 172 независимо подтверждены обоими поставщиками.
+- Выгрузка — это **новая перепись, а не правка прежней**: 81 % её содержимого в
+  трёх округах 2022 года не имеет соответствия в эталоне 2022 года.
+- **Панель ARKTMED перестала быть синтетической** — но лишилась всех показателей
+  исходов здоровья, которые несла раньше.
+
+# Часть I — происхождение и подтверждение источников {#sec-provenance}
+
+```{python}
+# | label: fig-provenance
+# | fig-cap: "Происхождение записей третьей поставки. Независимое подтверждение остаётся исключением."
+counts = v3["provenance"].value_counts().reindex(PROV_ORDER)
+fig, ax = plt.subplots(figsize=(7.2, 2.6))
+left = 0
+for label in PROV_ORDER:
+    val = counts[label]
+    ax.barh([0], [val], left=left, color=PROV_COLORS[label],
+            label=f"{label} — {val:,} ({val / n_obj * 100:.1f}%)")
+    if val / n_obj > 0.05:
+        ax.text(left + val / 2, 0, f"{val:,}", ha="center", va="center",
+                color="white", fontsize=9, fontweight="bold")
+    left += val
+ax.set_yticks([])
+ax.set_xlabel("Objects")
+ax.set_title("Provenance of the 2026 export")
+ax.grid(axis="y", visible=False)
+ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.35), ncol=1, fontsize=8, frameon=False)
+plt.tight_layout()
+plt.show()
+```
+
+Обоими поставщиками подтверждены лишь **172 объекта (2,4 %)**. Выгрузка — это
+преимущественно односточниковый продукт на базе OSM с меньшинством из 2ГИС,
+поэтому метка «`confirmed_by_2gis_and_osm`» обозначает небольшое привилегированное
+подмножество, а не обычный случай.
+
+```{python}
+# | label: tbl-provenance-okrug
+# | tbl-cap: "Происхождение записей по округам. Доля подтверждённых объектов везде низкая; ни один округ не покрыт систематически лучше."
+t = pd.crosstab(v3["okrug_key"], v3["provenance"]).reindex(OKRUG_ORDER)
+t = t.reindex(columns=PROV_ORDER, fill_value=0)
+t["Total"] = t.sum(axis=1)
+t["Confirmed %"] = (100 * t["Confirmed by 2GIS + OSM"] / t["Total"]).map("{:.1f}".format)
+t["2GIS reach %"] = (100 * (t["Confirmed by 2GIS + OSM"] + t["2GIS only"]) / t["Total"]).map("{:.1f}".format)
+t["Total"] = t["Total"].map("{:,}".format)
+Markdown(t.rename(columns={"Confirmed by 2GIS + OSM": "Both", "2GIS only": "2GIS",
+                           "OSM only": "OSM"}).to_markdown(disable_numparse=True))
+```
+
+```{python}
+# | label: fig-provenance-class
+# | fig-cap: "Охват 2ГИС по классам таксономии 2022. Сильнее всего от 2ГИС зависят точки продажи табака и спортивные объекты; алкогольные магазины и промышленные объекты целиком держатся на OSM."
+cls = [x for x in c.CLASS_ORDER if (v3["category_2022"] == x).any()]
+share = pd.crosstab(v3["category_2022"], v3["provenance"], normalize="index") * 100
+share = share.reindex(cls).reindex(columns=PROV_ORDER, fill_value=0)
+fig, ax = plt.subplots(figsize=(7.2, 4.2))
+left = np.zeros(len(share))
+for label in PROV_ORDER:
+    ax.barh(share.index, share[label], left=left, color=PROV_COLORS[label], label=label)
+    left += share[label].to_numpy()
+ax.set_xlabel("Share of objects, %")
+ax.set_title("Provenance mix by 2022-taxonomy class")
+ax.grid(axis="y", visible=False)
+ax.invert_yaxis()
+# Below the axes: every bar spans the full width, so any in-plot legend would
+# sit on top of data.
+ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=3,
+          fontsize=7, frameon=False)
+plt.tight_layout()
+plt.show()
+```
+
+## Внутренняя сверка источников в самой выгрузке
+
+Выгрузка несёт собственную сверку 2ГИС↔OSM в полях `match_distance_meters` и
+`match_name_similarity`, заполненных для 6 785 объектов.
+
+```{python}
+# | label: tbl-internal-match
+# | tbl-cap: "Внутренняя сверка источников в самой выгрузке. Там, где два поставщика пересекаются, они совпадают почти точно."
+d = v3["match_distance_meters"].dropna()
+s = v3["match_name_similarity"].dropna()
+rows = [
+    ["Records carrying a cross-source score", f"{len(d):,}", f"{len(d) / n_obj * 100:.1f}% of export"],
+    ["Distance exactly 0 m", f"{(d == 0).sum():,}", f"{(d == 0).mean() * 100:.1f}% of scored"],
+    ["Distance above 20 m", f"{(d > 20).sum():,}", f"max {d.max():.1f} m"],
+    ["Name similarity = 1.00", f"{(s >= 0.999).sum():,}", f"{(s >= 0.999).mean() * 100:.1f}% of scored"],
+    ["Name similarity below 0.50", f"{(s < 0.5).sum():,}", "residual disagreements"],
+]
+Markdown(pd.DataFrame(rows, columns=["Measure", "Value", "Note"]).to_markdown(index=False))
+```
+
+Распределение вырожденное: 99,5 % оценённых записей стоят ровно на 0 м, а
+99,8 % — на сходстве названий ровно 1,00. Это **ключ дедупликации, а не
+независимая верификация**: он фиксирует, что одна и та же строка в одной и той же
+точке встретилась дважды, а это гораздо более слабое утверждение, чем
+независимое подтверждение объекта двумя источниками.
+
+## Полнота полей
+
+```{python}
+# | label: fig-completeness
+# | fig-cap: "Полнота атрибутов, третья поставка против первой. Полнота не изменилась: выгрузка улучшила округа, но не атрибуты."
+fields = ["adress_orig", "latitude", "opening_hours_orig", "phone_orig",
+          "website_orig", "opening_date_orig"]
+labels = ["Address", "Coordinates", "Opening hours", "Phone", "Website", "Opening date"]
+cur = [v3[f].notna().mean() * 100 for f in fields]
+old = [v1[f].notna().mean() * 100 for f in fields]
+y = np.arange(len(fields))
+fig, ax = plt.subplots(figsize=(7.2, 4.0))
+ax.barh(y + 0.20, old, height=0.38, color=OLD, label="1st delivery")
+ax.barh(y - 0.20, cur, height=0.38, color=ACCENT, label="3rd delivery")
+for i, v in enumerate(cur):
+    ax.text(v, i - 0.20, f" {v:.0f}%", va="center", fontsize=8, color=INK)
+ax.set_yticks(y, labels)
+ax.set_xlim(0, 118)          # room for the 100% direct label
+ax.set_xlabel("Records with the field populated, %")
+ax.set_title("Attribute completeness")
+ax.grid(axis="y", visible=False)
+# Upper right is the only quadrant free of bars (opening date sits at 1%).
+ax.legend(fontsize=8, loc="upper right")
+plt.tight_layout()
+plt.show()
+```
+
+Поле `website_check_status` **пусто во всех `{python} f"{n_obj:,}".replace(",", " ")` записях** —
+столбец существует, но не был заполнен, то есть ни один сайт не проверялся. Поле
+`opening_date_orig` заполнено для 0,6 % объектов, что исключает любой анализ
+времени появления объектов.
+
+# Часть II — сырые группы объектов {#sec-raw}
+
+Выгрузка содержит `{python} f"{n_cat}"` исходных категорий и
+`{python} f"{n_type}"` типов объектов в `{python} f"{n_okrug}"` округах.
+
+```{python}
+# | label: fig-categories
+# | fig-cap: "Объекты по исходным категориям (подписи английские; исходные значения — русские)."
+barh(v3["category_en"].value_counts(), "Objects by source category", "Objects",
+     fmt_pct=True, figsize=(7.2, 5.4))
+```
+
+Половина выгрузки (50,1 %) приходится на одну категорию — `Магазины`. Поле
+категории, таким образом, слишком грубое; разрешающую способность несёт поле
+`type_orig` ниже.
+
+```{python}
+# | label: fig-types
+# | fig-cap: "20 самых частых типов объектов (type_orig, исходные русские значения)."
+barh(v3["type_orig"].value_counts().head(20), "Top 20 object types", "Objects",
+     figsize=(7.2, 5.6))
+```
+
+```{python}
+# | label: fig-okrug-fix
+# | fig-cap: "Объекты по округам: первая выгрузка (серым) против третьей (синим). Перекос первой выгрузки в сторону Октябрьского округа исчез, а слитая метка «Исакогорский и Цигломенский» разделена на два округа."
+cur = v3["okrug_key"].value_counts()
+old = v1["okrug_key"].value_counts()
+idx = sorted(set(cur.index) | set(old.index), key=lambda k: -cur.get(k, 0))
+y = np.arange(len(idx))
+fig, ax = plt.subplots(figsize=(7.2, 5.0))
+ax.barh(y + 0.20, [old.get(k, 0) for k in idx], height=0.38, color=OLD, label="1st delivery")
+ax.barh(y - 0.20, [cur.get(k, 0) for k in idx], height=0.38, color=ACCENT, label="3rd delivery")
+for i, k in enumerate(idx):
+    ax.text(cur.get(k, 0), i - 0.20, f" {cur.get(k, 0):,}", va="center", fontsize=8, color=INK)
+ax.set_yticks(y, idx, fontsize=8)
+ax.invert_yaxis()
+ax.set_xlabel("Objects")
+ax.set_title("Objects per okrug — first vs third delivery")
+ax.grid(axis="y", visible=False)
+ax.legend(fontsize=8, loc="lower right")
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+# | label: tbl-skew
+# | tbl-cap: "Концентрация объектов в крупнейшем округе — дефект, из-за которого результаты первой поставки в разрезе округов были непригодны."
+top1 = v3["okrug_key"].value_counts()
+top1_old = v1["okrug_key"].value_counts()
+rows = [
+    ["Largest okrug's share", f"{top1.iloc[0] / len(v1) * 100:.0f}% (Oktyabrsky)" if False else f"{top1.iloc[0] / n_obj * 100:.1f}%",
+     f"{top1_old.iloc[0] / len(v1) * 100:.1f}%"],
+    ["Smallest okrug's count", f"{top1.iloc[-1]:,}", f"{top1_old.iloc[-1]:,}"],
+    ["Distinct okrugs", f"{len(top1)}", f"{len(top1_old)}"],
+]
+Markdown(pd.DataFrame(rows, columns=["Measure", "3rd delivery", "1st delivery"]).to_markdown(index=False))
+```
+
+# Часть III — перекодировка в таксономию 2022 года {#sec-recode}
+
+В исследовании 2022 года использовалась таксономия здоровья из семи классов.
+Функция `recode_2022()` отображает на неё выгрузку 2026 года по полям
+`category_orig`, `type_orig` и названию объекта — именно в этом порядке
+приоритета. Полный свод правил и итоговая таблица соответствия приведены в
+`docs/crosswalk_2022.md`.
+
+::: {.callout-note}
+## Дефект, унаследованный от предыдущих отчётов
+
+Копия этого правила в `analysis/v1/eda.qmd` и `analysis/v2/eda-v2.qmd` приводит поле
+типа к нижнему регистру, а затем сравнивает его со списком продуктовых типов,
+записанным **с заглавных букв**. Проверка не может сработать никогда, поэтому
+класс `Grocery shops` пуст во всех ранее сданных отчётах, а его объекты
+поглощены классом `Other (outside 2022 scheme)`. Здесь правило исправлено: оно
+перемещает **811 объектов (11,2 %)** этой выгрузки, 854 объекта первой выгрузки и
+392 из 1 753 записей эталона 2022 года — 22 % эталона. Значения `Other` в
+отчётах первой и второй поставок завышены соответственно.
+:::
+
+```{python}
+# | label: fig-recode
+# | fig-cap: "Выгрузка 2026 года, перекодированная в таксономию здоровья 2022 года."
+counts = v3["category_2022"].value_counts().reindex(
+    [x for x in c.CLASS_ORDER if (v3["category_2022"] == x).any()])
+barh(counts, "Objects by 2022-taxonomy class", "Objects", fmt_pct=True, figsize=(7.2, 4.2))
+```
+
+```{python}
+# | label: tbl-recode-compare
+# | tbl-cap: "Таксономия 2022 в трёх источниках. Эталон 2022 года собирался под эту таксономию; выгрузка 2026 года — универсальная перепись, в которой 63 % объектов лежат за её пределами."
+cls = [x for x in c.CLASS_ORDER]
+t = pd.DataFrame({
+    "2022 benchmark": ref22["category_2022"].value_counts().reindex(cls, fill_value=0),
+    "1st delivery": v1["category_2022"].value_counts().reindex(cls, fill_value=0),
+    "3rd delivery": v3["category_2022"].value_counts().reindex(cls, fill_value=0),
+})
+t["3rd, % of export"] = (100 * t["3rd delivery"] / n_obj).map("{:.1f}".format)
+for col in ["2022 benchmark", "1st delivery", "3rd delivery"]:
+    t[col] = t[col].map("{:,}".format)
+# tabulate re-parses numeric-looking strings and drops the formatting, so the
+# pre-formatted columns need number parsing switched off.
+Markdown(t.to_markdown(disable_numparse=True))
+```
+
+Эталон 2022 года собирался *под* эту таксономию, поэтому за её пределы выходят
+лишь 7 его записей. Выгрузка 2026 года — универсальная перепись: 63 % её
+содержимого лежит вне схемы 2022 года. Поэтому сравнивать их следует
+класс за классом и никогда — по итоговым суммам.
+
+```{python}
+# | label: tbl-recode-okrug
+# | tbl-cap: "Классы таксономии 2022 по округам (в объектах). Округа в строках, классы в столбцах."
+cls = [x for x in c.CLASS_ORDER if (v3["category_2022"] == x).any()]
+t = pd.crosstab(v3["okrug_key"], v3["category_2022"]).reindex(OKRUG_ORDER)
+t = t.reindex(columns=cls, fill_value=0)
+short = {"Grocery shops": "Grocery", "Alcohol shops": "Alcohol",
+         "Tobacco outlets": "Tobacco", "Other (outside 2022 scheme)": "Other"}
+Markdown(t.rename(columns=short).to_markdown())
+```
+
+```{python}
+# | label: fig-recode-heat
+# | fig-cap: "Состав внутри округа: каждая строка в сумме даёт 100 %. Величина закодирована одним последовательным оттенком."
+share = (t.div(t.sum(axis=1), axis=0) * 100).rename(columns=short)
+fig, ax = plt.subplots(figsize=(7.2, 4.2))
+im = ax.imshow(share.values, cmap="Blues", aspect="auto", vmin=0)
+ax.set_xticks(range(len(share.columns)), share.columns, rotation=35, ha="right", fontsize=8)
+ax.set_yticks(range(len(share.index)), share.index, fontsize=8)
+for i in range(share.shape[0]):
+    for j in range(share.shape[1]):
+        v = share.values[i, j]
+        ax.text(j, i, f"{v:.0f}", ha="center", va="center", fontsize=7,
+                color="white" if v > share.values.max() * 0.55 else INK)
+ax.set_title("Share of each okrug's objects by 2022 class, %")
+ax.grid(False)
+fig.colorbar(im, ax=ax, shrink=0.8, label="% of okrug")
+plt.tight_layout()
+plt.show()
+```
+
+## Инфраструктура, поддерживающая здоровье, против факторов риска
+
+Следуя рамке 2022 года, классы `Medical` и `Sport` относятся к поддерживающим
+здоровье, а `Alcohol shops`, `Tobacco outlets` и `Industrial` — к факторам
+риска.
+
+```{python}
+# | label: tbl-healthrisk
+# | tbl-cap: "Объекты, поддерживающие здоровье, против факторов риска по округам, с их соотношением. Значения абсолютные: знаменателя по численности населения в этой поставке нет."
+grp = np.where(v3["category_2022"].isin(c.HEALTH_CLASSES), "Health",
+               np.where(v3["category_2022"].isin(c.RISK_CLASSES), "Risk", "Neutral"))
+v3["grp"] = grp
+t = pd.crosstab(v3["okrug_key"], v3["grp"]).reindex(OKRUG_ORDER)
+t = t[["Health", "Risk", "Neutral"]]
+t["Ratio H:R"] = (t["Health"] / t["Risk"]).round(2)
+t.loc["CITY"] = [t["Health"].sum(), t["Risk"].sum(), t["Neutral"].sum(),
+                 round(t["Health"].sum() / t["Risk"].sum(), 2)]
+Markdown(t.to_markdown())
+```
+
+```{python}
+# | label: fig-healthrisk
+# | fig-cap: "Инфраструктура, поддерживающая здоровье (синим), против факторов риска (оранжевым) по округам."
+tt = t.drop(index="CITY")
+y = np.arange(len(tt))
+fig, ax = plt.subplots(figsize=(7.2, 4.4))
+ax.barh(y - 0.20, tt["Health"], height=0.38, color=ACCENT, label="Health-supporting (Medical, Sport)")
+ax.barh(y + 0.20, tt["Risk"], height=0.38, color=RISK, label="Risk factors (Alcohol, Tobacco, Industrial)")
+for i in range(len(tt)):
+    ax.text(tt["Health"].iloc[i], i - 0.20, f" {tt['Health'].iloc[i]:,}", va="center", fontsize=8, color=INK)
+    ax.text(tt["Risk"].iloc[i], i + 0.20, f" {tt['Risk'].iloc[i]:,}", va="center", fontsize=8, color=INK)
+ax.set_yticks(y, tt.index, fontsize=8)
+ax.invert_yaxis()
+ax.set_xlabel("Objects")
+ax.set_title("Health-supporting infrastructure vs. risk factors")
+ax.grid(axis="y", visible=False)
+ax.legend(fontsize=8, loc="lower right")
+plt.tight_layout()
+plt.show()
+```
+
+По городу в целом соотношение составляет 5,3 объекта, поддерживающего здоровье,
+на один объект риска. Разброс по округам (от 3,7 до 8,5) держится на малых
+значениях в части риска — в самых маленьких округах приходится от 2 до 6 таких
+объектов, — поэтому окружные соотношения следует читать лишь как ориентировочные.
+Кроме того, объекты риска относятся к классам, которые выгрузка покрывает хуже
+всего (см. @sec-provenance), что смещает соотношение вверх.
+
+# Часть IV — пространственное распределение {#sec-map}
+
+```{python}
+# | label: fig-map
+# | fig-cap: "Пространственное распределение выгрузки 2026 года по округам на подложке OpenStreetMap/CARTO."
+fig, ax = plt.subplots(figsize=(7.2, 6.4))
+for color, d in zip(sns.color_palette("colorblind", len(OKRUG_ORDER)), OKRUG_ORDER):
+    sub = v3[v3["okrug_key"] == d]
+    ax.scatter(sub["longitude"], sub["latitude"], s=5, alpha=0.55,
+               color=color, label=f"{d} ({len(sub):,})")
+ax.set_xlabel("Longitude")
+ax.set_ylabel("Latitude")
+ax.set_title("Objects by okrug — 2026 export")
+ax.set_aspect(1 / np.cos(np.deg2rad(64.54)))
+try:
+    # Tiles are cached in data/tile_cache, so only the first render needs
+    # internet access; offline we fall back to the plain scatter.
+    import contextily as ctx
+    tile_cache = c.ROOT / "data" / "tile_cache"
+    tile_cache.mkdir(exist_ok=True)
+    ctx.set_cache_dir(str(tile_cache))
+    ctx.add_basemap(ax, crs="EPSG:4326", source=ctx.providers.CartoDB.Positron,
+                    attribution_size=5)
+    ax.grid(visible=False)
+except Exception:
+    ax.grid(alpha=0.2)
+ax.legend(loc="upper left", fontsize=7, markerscale=2.4, framealpha=0.9)
+plt.tight_layout()
+plt.show()
+```
+
+Раскраска по округам теперь следует видимым пространственным границам. Выгрузка
+охватывает полосу 64,41–64,71° с. ш., включая удалённые северные и южные округа,
+а не только центр.
+
+```{python}
+# | label: fig-map-class
+# | fig-cap: "Объекты, поддерживающие здоровье (синим), и факторы риска (оранжевым) поверх нейтрального остатка (серым). Факторы риска сосредоточены вдоль центрального коридора."
+fig, ax = plt.subplots(figsize=(7.2, 6.4))
+neutral = v3[v3["grp"] == "Neutral"]
+ax.scatter(neutral["longitude"], neutral["latitude"], s=3, alpha=0.18,
+           color=MIXED, label=f"Neutral ({len(neutral):,})")
+for key, color in [("Health", ACCENT), ("Risk", RISK)]:
+    sub = v3[v3["grp"] == key]
+    ax.scatter(sub["longitude"], sub["latitude"], s=13, alpha=0.85,
+               color=color, edgecolor="white", linewidth=0.3,
+               label=f"{key} ({len(sub):,})")
+ax.set_xlabel("Longitude")
+ax.set_ylabel("Latitude")
+ax.set_title("Health-supporting infrastructure and risk factors")
+ax.set_aspect(1 / np.cos(np.deg2rad(64.54)))
+try:
+    import contextily as ctx
+    tile_cache = c.ROOT / "data" / "tile_cache"
+    tile_cache.mkdir(exist_ok=True)
+    ctx.set_cache_dir(str(tile_cache))
+    ctx.add_basemap(ax, crs="EPSG:4326", source=ctx.providers.CartoDB.Positron,
+                    attribution_size=5)
+    ax.grid(visible=False)
+except Exception:
+    ax.grid(alpha=0.2)
+ax.legend(loc="upper left", fontsize=8, markerscale=1.8, framealpha=0.9)
+plt.tight_layout()
+plt.show()
+```
+
+На три округа, охваченных исследованием 2022 года, приходится
+`{python} f"{len(three):,}".replace(",", " ")` из `{python} f"{n_obj:,}".replace(",", " ")` объектов выгрузки
+(`{python} f"{len(three) / n_obj * 100:.0f}"` %). Сравнение на уровне записей с
+эталоном 2022 года, включая карту подтверждения по этим трём округам, — предмет
+парного отчёта (`reports/v3/eda-v3-validation-ru.pdf`); его главный вывод в том,
+что лишь **19 %** содержимого 2026 года в этих округах имеет соответствие в 2022
+году, а заявленная подрядчиком доля совпадений 94,3 % не выдерживает независимой
+перепроверки.
+
+# Часть V — коммерческий справочник {#sec-base}
+
+```{python}
+# | label: load-base
+base = c.load_export_base()
+n_base = len(base)
+base_coords = base["latitude"].notna().sum()
+base_district = base["Район города"].notna().sum()
+```
+
+Файл `export_base_688669_zal6mp.xlsx` не имеет аналогов в прежних поставках:
+`{python} f"{n_base:,}".replace(",", " ")` записей по 25 полям в **третьей таксономии**
+(`Рубрика` / `Подрубрика` / `Тип подрубрики`), не связанной ни с собственными
+категориями выгрузки, ни со схемой 2022 года. Он несёт поля, которых нет ни в
+одном другом источнике: анализ выручки, рейтинг в интернете, число отзывов,
+контакты в мессенджерах.
+
+```{python}
+# | label: tbl-base
+# | tbl-cap: "Коммерческий справочник в цифрах. Поле округа непригодно, а координаты слишком грубые для сопоставления на уровне записей."
+rows = [
+    ["Records", f"{n_base:,}", "vs 7,263 in the main export"],
+    ["Fields", "25", "third taxonomy, no shared key"],
+    ["Okrug field populated", f"{base_district:,}", "unusable — okrug must come from coordinates"],
+    ["Coordinates present", f"{base_coords:,}", f"{base_coords / n_base * 100:.1f}%, rounded to 3 decimals (approx. +-55 m)"],
+    ["Company type populated", f"{base['Тип компании'].notna().sum():,}", f"{base['Тип компании'].notna().mean() * 100:.0f}%"],
+    ["Status 'active'", f"{(base['Статус'] == 'Действующая').sum():,}", "10 in liquidation"],
+]
+Markdown(pd.DataFrame(rows, columns=["Measure", "Value", "Note"]).to_markdown(index=False))
+```
+
+```{python}
+# | label: fig-base-rubric
+# | fig-cap: "12 самых частых рубрик коммерческого справочника. По составу это бизнес-справочник, а не реестр инфраструктуры."
+barh(base["Рубрика"].value_counts().head(12), "Commercial dump — top rubrics",
+     "Records", color=PURPLE, figsize=(7.2, 4.8))
+```
+
+Два свойства лишают этот файл права быть первичным источником. Поле округа в нём
+**пусто во всех записях**, поэтому округ восстановим только пространственно; а
+координаты округлены до трёх знаков — примерно ±55 м на этой широте, — что грубее
+радиуса 50 м, применяемого при сопоставлении записей. Файл пригоден как
+дополнительный источник атрибутов и как слабый сигнал стороннего подтверждения
+(парный отчёт оценивает это подтверждение в 3,6 % по названию и адресу), но он не
+может ни заменить основную выгрузку, ни подтвердить её.
+
+# Часть VI — панель показателей ARKTMED {#sec-arktmed}
+
+```{python}
+# | label: load-ark
+ark3 = c.load_arktmed()
+ark2 = c.load_arktmed(c.V2_ARK)
+ind3, ind2 = ark3["Показатели"], ark2["Показатели"]
+ind3["section_en"] = ind3["Раздел"].map(c.SECTION_EN).fillna(ind3["Раздел"])
+
+
+def linearity(ind):
+    out = []
+    for code, g in ind.groupby("Код показателя"):
+        g = g.dropna(subset=["Значение"])
+        if len(g) >= 3 and g["Значение"].std() > 0:
+            out.append(np.corrcoef(g["Год"], g["Значение"])[0, 1] ** 2)
+    return np.array(out)
+
+
+lin3, lin2 = linearity(ind3), linearity(ind2)
+```
+
+::: {.callout-important}
+## Оговорка о синтетической панели снята — но панель лишилась показателей здоровья
+
+Панель второй поставки была синтетической: **27 из 27** проверяемых рядов были
+строго линейны по времени (R² ≥ 0 999). В этой поставке таких **0 из
+`{python} f"{len(lin3)}"`** при медианном R², равном
+`{python} f"{np.median(lin3):.2f}".replace(".", ",")`, а в источниках указаны конкретные файлы
+Росстата, а не главные страницы порталов. Числа теперь можно цитировать. Однако
+все показатели исходов здоровья, которые несла прежняя панель — заболеваемость,
+смертность, ожидаемая продолжительность жизни, загрязнение воздуха, выбросы, —
+**удалены**, а лист индекса риска пуст.
+:::
+
+```{python}
+# | label: tbl-ark-compare
+# | tbl-cap: "Панель показателей: вторая поставка против третьей."
+rows = [
+    ["Indicator rows", f"{len(ind2):,}", f"{len(ind3):,}"],
+    ["Distinct indicators", f"{ind2['Код показателя'].nunique()}", f"{ind3['Код показателя'].nunique()}"],
+    ["Sections", f"{ind2['Раздел'].nunique()}", f"{ind3['Раздел'].nunique()}"],
+    ["Distinct sources cited", f"{ind2['Источник'].nunique()}", f"{ind3['Источник'].nunique()}"],
+    ["Series exactly linear in time", f"{int((lin2 >= 0.999).sum())} of {len(lin2)}",
+     f"{int((lin3 >= 0.999).sum())} of {len(lin3)}"],
+    ["Median R2 of value on year", f"{np.median(lin2):.3f}", f"{np.median(lin3):.3f}"],
+    ["Indicators with all 6 years", f"{int((ind2.groupby('Код показателя')['Год'].nunique() == 6).sum())}",
+     f"{int((ind3.groupby('Код показателя')['Год'].nunique() == 6).sum())}"],
+    ["Risk-index sheet rows", f"{len(ark2['Индекс риска'])}", f"{len(ark3['Индекс риска'])}"],
+]
+Markdown(pd.DataFrame(rows, columns=["Measure", "2nd delivery", "3rd delivery"]).to_markdown(index=False))
+```
+
+```{python}
+# | label: tbl-ark-coverage
+# | tbl-cap: "Показатели третьей поставки по разделам с фактически покрытыми годами. Полный период охватывают только климатические ряды."
+g = (ind3.groupby(["section_en", "Показатель"])
+     .agg(Unit=("Ед. изм.", "first"), Years=("Год", "nunique"),
+          First=("Год", "min"), Last=("Год", "max"))
+     .reset_index()
+     .rename(columns={"section_en": "Section", "Показатель": "Indicator"}))
+g["Indicator"] = g["Indicator"].str.slice(0, 46)
+Markdown(g.to_markdown(index=False))
+```
+
+```{python}
+# | label: fig-ark-coverage
+# | fig-cap: "Покрытие по годам для каждого показателя. За пределами климата панель — это срез за два-три года, а не временной ряд."
+piv = ind3.pivot_table(index="Показатель", columns="Год", values="Значение",
+                       aggfunc="first").notna().astype(int)
+order = ind3.drop_duplicates("Показатель").set_index("Показатель")["section_en"]
+piv = piv.loc[order.sort_values().index]
+fig, ax = plt.subplots(figsize=(7.2, 5.6))
+ax.imshow(piv.values, cmap="Blues", aspect="auto", vmin=0, vmax=1)
+ax.set_xticks(range(len(piv.columns)), [str(int(y)) for y in piv.columns])
+ax.set_yticks(range(len(piv.index)), [s[:44] for s in piv.index], fontsize=7)
+ax.set_title("Indicator coverage by year (filled = value present)")
+ax.grid(False)
+plt.tight_layout()
+plt.show()
+```
+
+## Экологические показатели
+
+```{python}
+# | label: tbl-eco
+# | tbl-cap: "Раздел «Экология» целиком. Все четыре ряда — это затраты за один 2025 год."
+eco = ind3[ind3["Раздел"] == "Экология"][["Показатель", "Год", "Значение", "Ед. изм."]]
+eco = eco.rename(columns={"Показатель": "Indicator", "Год": "Year",
+                          "Значение": "Value", "Ед. изм.": "Unit"})
+eco["Value"] = eco["Value"].map(lambda v: f"{v:,.0f}")
+Markdown(eco.to_markdown(index=False))
+```
+
+Раздел «Экология» состоит из четырёх строк затрат **только за 2025 год**. Они
+описывают муниципальные расходы на охрану окружающей среды, а не её состояние: ни
+качества воздуха, ни выбросов, ни качества воды в этой поставке нет нигде. Вторая
+поставка содержала `air_pollution_index`, `emissions_total` и
+`water_quality_index`, но эти ряды были синтетическими и восстановлению не
+подлежат.
+
+```{python}
+# | label: fig-climate
+# | fig-cap: "Климатические ряды — единственные показатели, покрывающие весь период 2021–2026. Значения взяты из архива реанализа."
+clim = ind3[ind3["Раздел"] == "Климат"]
+show = ["Средняя температура", "Минимальная температура", "Максимальная температура"]
+fig, axes = plt.subplots(1, 3, figsize=(7.2, 2.9), sharex=True)
+for ax, name, color in zip(axes, show, [ACCENT, GREEN, RISK]):
+    s = clim[clim["Показатель"] == name].sort_values("Год")
+    ax.plot(s["Год"], s["Значение"], marker="o", markersize=5, linewidth=2, color=color)
+    ax.set_title(name[:26], fontsize=9)
+    ax.set_xlabel("")
+    ax.tick_params(labelsize=7)
+axes[0].set_ylabel("°C", fontsize=8)
+fig.suptitle("Climate series, 2021–2026 (°C)", fontsize=11, fontweight="bold")
+plt.tight_layout()
+plt.show()
+```
+
+Обратите внимание, что на момент поставки 2026 год не завершён: климатические
+значения панели за 2026 год покрывают неполный год, и экономические ряды тоже
+доведены до 2026 года. Последний год следует считать предварительным.
+
+# Оговорки {#sec-caveats}
+
+- **Независимое подтверждение встречается редко.** Обоими поставщиками
+  подтверждены 2,4 % объектов; 89,6 % держатся только на OSM. Собственные поля
+  выгрузки `match_distance_meters` / `match_name_similarity` — это ключ
+  дедупликации, а не независимая верификация.
+- **Поле `website_check_status` пусто во всех записях**, а `opening_date_orig`
+  заполнено для 0,6 %.
+- **Класс `Grocery shops` был пуст во всех ранее сданных отчётах**
+  (см. @sec-recode). Любое опубликованное значение `Other (outside 2022 scheme)`
+  из отчётов первой или второй поставки завышено примерно на 800 объектов.
+- **Класс `Industrial` при таком размере ненадёжен.** В нём 25 объектов, часть из
+  которых — ложные срабатывания по подстроке в названии (хостел, ювелирный
+  магазин). Не используйте окружные значения по промышленным объектам.
+- **Знаменателя по численности населения** в этой поставке нет, поэтому все
+  сравнения по округам — это абсолютные значения. Окружные соотношения
+  «здоровье / риск» опираются на однозначные величины риска в малых округах.
+- **Коммерческий справочник непригоден для работы на уровне округов и записей**:
+  пустое поле округа, координаты округлены до ±55 м.
+- **Панель ARKTMED не содержит ни одного показателя исходов здоровья**, а её лист
+  индекса риска пуст. За пределами климатических рядов это срез за два-три года,
+  а значения за 2026 год предварительны.
+- **Пять округов по-прежнему не проверены ни против какого эталона.**
+  Исследование 2022 года покрывает только Ломоносовский, Октябрьский и Майскую
+  Горку; ничто в этой поставке не проверяет остальные шесть независимо.

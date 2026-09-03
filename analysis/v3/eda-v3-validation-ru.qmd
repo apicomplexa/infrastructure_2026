@@ -1,0 +1,573 @@
+---
+title: "Городская инфраструктура Архангельска — независимая проверка третьей поставки"
+subtitle: "Выгрузка 2026 года, перепроверенная по эталону 2022 года без опоры на сравнение подрядчика (2026-08-31)"
+author: "СГМУ — проект по городской инфраструктуре"
+date: today
+lang: ru
+format:
+  pdf:
+    pdf-engine: xelatex
+    mainfont: "Arial"
+    sansfont: "Arial"
+    monofont: "Consolas"
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    fig-width: 7.2
+    fig-height: 4.4
+    fig-align: center
+    fig-pos: "H"
+    geometry:
+      - margin=2.2cm
+    colorlinks: true
+execute:
+  echo: false
+  warning: false
+  message: false
+jupyter: python3
+---
+
+```{python}
+# | label: setup
+import sys
+import unicodedata
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+from IPython.display import Markdown
+
+# Locate the repository root, so this report may live at any depth under it.
+_root = next(p for p in [Path.cwd(), *Path.cwd().parents]
+             if (p / "pixi.toml").exists())
+sys.path.insert(0, str(_root / "src"))
+from arkhinfra import v3_common as c    # noqa: E402
+from arkhinfra import match_2022 as m   # noqa: E402
+
+mpl.rcParams.update({
+    "font.family": "DejaVu Sans",   # full Cyrillic coverage for figure labels
+    "figure.dpi": 150,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "axes.grid": True,
+    "grid.alpha": 0.25,
+    "axes.titlesize": 12,
+    "axes.titleweight": "bold",
+})
+
+ACCENT, RISK, GREEN, PURPLE = c.ACCENT, c.RISK, c.GREEN, c.PURPLE
+MIXED, OLD = c.MIXED, c.OLD
+
+# Tier hues are assigned in this fixed order and never cycled; every chart that
+# uses them also carries a legend or direct labels, so identity is never colour
+# alone (the palette's worst adjacent pair sits in the CVD floor band).
+TIER_ORDER = ["exact", "probable", "gps_only", "unmatched"]
+TIER_LABEL = {
+    "exact": "Exact (name >= 0.90)",
+    "probable": "Probable (0.75-0.90)",
+    "gps_only": "GPS only (name fails)",
+    "unmatched": "Unmatched",
+}
+TIER_COLOR = {"exact": GREEN, "probable": ACCENT, "gps_only": PURPLE, "unmatched": RISK}
+
+PROC = c.PROC
+local = pd.read_csv(PROC / "match_2022_local.csv", sep=";", encoding="utf-8-sig")
+vendor = pd.read_csv(PROC / "match_2022_vendor.csv", sep=";", encoding="utf-8-sig")
+sens = pd.read_csv(PROC / "match_2022_sensitivity.csv", sep=";", encoding="utf-8-sig")
+
+for d in (local, vendor):
+    d["tier"] = pd.Categorical(d["tier"], categories=TIER_ORDER, ordered=True)
+
+
+def tier_counts(d):
+    return d["tier"].value_counts().reindex(TIER_ORDER, fill_value=0)
+
+
+def recall_pct(d):
+    t = tier_counts(d)
+    return 100 * (t["exact"] + t["probable"]) / len(d)
+
+
+def incl_gps_pct(d):
+    t = tier_counts(d)
+    return 100 * (t["exact"] + t["probable"] + t["gps_only"]) / len(d)
+
+
+TL, TV = tier_counts(local), tier_counts(vendor)
+R_LOCAL, R_VENDOR = recall_pct(local), recall_pct(vendor)
+G_VENDOR = incl_gps_pct(vendor)
+```
+
+```{python}
+# | label: load-sources
+# The contractor's own reported results, for the cross-check.
+vend_summary = pd.read_csv(c.RAW2 / "итоги_сравнения_3_округа.csv",
+                           sep=";", encoding="utf-8-sig")
+svodka = pd.read_excel(c.V2_CMP, sheet_name="Сводка")
+svodka_map = dict(zip(svodka["Показатель"], svodka["Значение"]))
+
+v3 = c.load_v3()
+three = v3[v3["okrug_key"].isin(c.OKRUGS_2022)].copy()
+ref_local = c.load_ref_2022_local()
+```
+
+# Зачем нужен этот отчёт
+
+Во второй поставке подрядчик передал сравнение записей, в котором сообщил, что
+**94,3 %** объектов 2022 года найдены в выгрузке 2026 года. Настоящий отчёт
+заново выводит эту цифру из исходных файлов с помощью независимо написанного
+матчера и приходит к другому ответу.
+
+Обе цифры арифметически верны. Они измеряют разные вещи, и в этом различии и
+состоит результат.
+
+::: {.callout-note appearance="simple"}
+**Главное.** Из объектов эталона 2022 года выгрузка третьей поставки
+воспроизводит **`{python} f"{R_LOCAL:.1f}".replace(".", ",")` %** как *тот же бизнес по тому же
+адресу*. У подрядчика 94,3 % засчитывают объект 2022 года как найденный, если
+*любой* объект 2026 года попадает в радиус поиска, — независимо от того, тот же
+это бизнес или нет. Их тир подтверждённых совпадений надёжен; тир вероятных
+совпадений — это в основном геометрическая близость.
+:::
+
+# Методика
+
+Матчер (`src/arkhinfra/match_2022.py`, запускается через `pixi run match-2022`) —
+самостоятельная реализация, а не пересказ рабочей книги подрядчика:
+
+- **Блокировка.** Кандидаты среди записей 2026 года в пределах **50 м** от
+  записи 2022 года (формула гаверсинуса).
+- **Оценка.** Нечёткое сравнение нормализованных названий через `WRatio` из
+  rapidfuzz. От `token_set_ratio` отказались: он возвращает 1,0 всякий раз, когда
+  множество токенов одного названия является подмножеством другого, — то есть
+  «Магнит» и «Магнит Косметик» получили бы идеальное совпадение. Он всё же
+  вычисляется и сохраняется, чтобы выбор можно было проверить.
+- **Ранжирование.** По сходству названий, затем адресов, затем по близости.
+- **Тир.** `exact` при сходстве названий >= 0,90; `probable` при 0,75–0,90;
+  `gps_only`, когда кандидаты есть, но ни одно название не проходит порог;
+  `unmatched`, когда в радиусе нет ничего.
+
+Названия приводятся к нижнему регистру и очищаются от кавычек, пунктуации и
+токенов организационно-правовых форм (`ООО`, `ИП`, а также родовых слов вроде
+`магазин`); адреса сводятся к улице и номеру дома. Полнота (recall) считает
+только `exact + probable`.
+
+Везде используются два эталона, поскольку существуют две версии документа
+2022 года (@sec-etalons):
+
+- **Эталон A** — `data/raw/objects_3_districts_2022.xlsx`, 1 753 строки, копия,
+  хранящаяся в этом репозитории.
+- **Эталон B** — лист `Документ 1` из рабочей книги сравнения подрядчика,
+  2 293 строки.
+
+# Ключевая цифра {#sec-headline}
+
+```{python}
+# | label: tbl-headline
+# | tbl-cap: "Результат сопоставления по независимому матчеру, оба эталона."
+tbl = pd.DataFrame({
+    "Etalon A (1,753)": TL,
+    "% A": (100 * TL / len(local)).round(1),
+    "Etalon B (2,293)": TV,
+    "% B": (100 * TV / len(vendor)).round(1),
+})
+tbl.index = [TIER_LABEL[i] for i in tbl.index]
+tbl.index.name = "Tier"
+Markdown(tbl.to_markdown())
+```
+
+Полнота (`exact + probable`) составляет **`{python} f"{R_LOCAL:.1f}".replace(".", ",")` %** на
+эталоне A и **`{python} f"{R_VENDOR:.1f}".replace(".", ",")` %** на эталоне B — оба эталона дают
+согласованный результат, так что цифра не является следствием выбора конкретного
+файла 2022 года.
+
+```{python}
+# | label: fig-outcome
+# | fig-cap: "Результат сопоставления по округам, оба эталона. Сегменты подписаны там, где они превышают 4 % длины столбца."
+fig, axes = plt.subplots(1, 2, figsize=(7.2, 3.6), sharey=True)
+for ax, (d, name) in zip(axes, [(local, "Etalon A (1,753)"), (vendor, "Etalon B (2,293)")]):
+    ct = pd.crosstab(d["okrug_key"], d["tier"]).reindex(columns=TIER_ORDER, fill_value=0)
+    ct = ct.loc[ct.sum(axis=1).sort_values().index]
+    left = np.zeros(len(ct))
+    for t in TIER_ORDER:
+        vals = ct[t].to_numpy()
+        ax.barh(ct.index, vals, left=left, color=TIER_COLOR[t],
+                label=TIER_LABEL[t], height=0.62)
+        for y, (v, l) in enumerate(zip(vals, left)):
+            if v > 0.04 * ct.sum(axis=1).to_numpy()[y]:
+                ax.text(l + v / 2, y, f"{v:,}", ha="center", va="center",
+                        fontsize=7, color="white")
+        left = left + vals
+    ax.set_title(name, fontsize=10)
+    ax.set_xlabel("Objects")
+    ax.grid(axis="y", visible=False)
+axes[0].legend(loc="lower right", fontsize=6.5, framealpha=0.92)
+plt.tight_layout(); plt.show()
+```
+
+Полнота ровная по всем трём округам — 66,1 %, 64,0 % и 62,3 % на эталоне A, — так
+что здесь нет и следа того перекоса по округам, который портил первую поставку.
+
+# Сверка с 94,3 % подрядчика {#sec-reconcile}
+
+```{python}
+# | label: tbl-crosscheck
+# | tbl-cap: "Заявленный результат подрядчика против независимых цифр настоящего отчёта, по округам (эталон B, те же 2 293 строки, которые использовал подрядчик)."
+rows = []
+name_map = {"Октябрьский округ": "Oktyabrsky",
+            "Ломоносовский округ": "Lomonosovsky",
+            "Округ Майская горка": "Maiskaya Gorka"}
+for _, r in vend_summary[vend_summary["Округ"] != "ВСЕГО"].iterrows():
+    ok = name_map[r["Округ"]]
+    sub = vendor[vendor["okrug_key"] == ok]
+    rows.append({
+        "Okrug": ok,
+        "Rows": int(r["Строк в исходном документе"]),
+        "Vendor found %": float(r["Доля найденных, %"]),
+        "Mine, incl. GPS-only %": round(incl_gps_pct(sub), 1),
+        "Mine, recall %": round(recall_pct(sub), 1),
+    })
+tot = {
+    "Okrug": "TOTAL",
+    "Rows": len(vendor),
+    "Vendor found %": 94.3,
+    "Mine, incl. GPS-only %": round(G_VENDOR, 1),
+    "Mine, recall %": round(R_VENDOR, 1),
+}
+cross = pd.DataFrame(rows + [tot])
+Markdown(cross.to_markdown(index=False))
+```
+
+Третий и четвёртый столбцы воспроизводят друг друга с точностью примерно до
+одного процентного пункта. В этом и состоит сверка: **«найдено» у подрядчика —
+это `exact + probable + gps_only` настоящего отчёта**, то есть объект 2022 года
+засчитывается как найденный, когда какой-либо объект 2026 года лежит в радиусе,
+безотносительно к его названию.
+
+```{python}
+# | label: tbl-vendor-tiers
+# | tbl-cap: "Собственный статус подрядчика против тиров настоящего отчёта, построчно (эталон B). Их тир подтверждённых совпадений надёжен; тир вероятных — это в основном геометрическая близость."
+ct = pd.crosstab(vendor["Статус сравнения"], vendor["tier"])
+ct = ct.reindex(columns=TIER_ORDER, fill_value=0)
+ct.columns = [TIER_LABEL[x].split(" (")[0] for x in ct.columns]
+ct.index = ["Probable match", "Not found", "Confirmed match"]
+ct.index.name = "Contractor's status"
+med = vendor.groupby("Статус сравнения")["name_sim"].median()
+ct["Median name sim."] = [round(med.get("Вероятное совпадение", np.nan), 3),
+                          round(med.get("Не найдено", np.nan), 3),
+                          round(med.get("Совпадение", np.nan), 3)]
+Markdown(ct.to_markdown())
+```
+
+Таблицу следует читать по строкам:
+
+- **Confirmed match** (1 168 строк) — медианное сходство названий **1,00**, и
+  1 012 из них попадают в тир `exact` настоящего отчёта. Этому тиру можно
+  доверять.
+- **Probable match** (995 строк) — медианное сходство названий **0 514**. 569 из
+  них попадают в `gps_only`: рядом есть объект 2026 года, название которого не
+  совпадает. Этот тир не может служить основанием для утверждения, что объект
+  найден.
+- **Not found** (130 строк) — 80 из них согласуются с тиром `unmatched`
+  настоящего отчёта.
+
+Прогон подрядчика выполнен с допуском 60 м и порогом сходства названий 0,86 при
+включённом режиме вероятных совпадений — согласно листу `Сводка` рабочей книги.
+Допуск близок к использованным здесь 50 м; расхождение возникает из-за того, что
+именно разрешено засчитывать тиру вероятных совпадений, а не из-за радиуса.
+
+# Чувствительность к порогам {#sec-sensitivity}
+
+```{python}
+# | label: fig-sensitivity
+# | fig-cap: "Полнота по сетке «радиус × порог сходства названий» (эталон A). Пунктирная линия — заявленные подрядчиком 94,3 %."
+fig, ax = plt.subplots(figsize=(7.2, 3.6))
+radii = sorted(sens["radius_m"].unique())
+thr = sorted(sens["name_threshold"].unique())
+width = 0.26
+colors = [GREEN, ACCENT, PURPLE]
+x = np.arange(len(radii))
+for k, (t, col) in enumerate(zip(thr, colors)):
+    vals = [sens[(sens.radius_m == r) & (sens.name_threshold == t)]["recall_pct"].iloc[0]
+            for r in radii]
+    pos = x + (k - 1) * width
+    ax.bar(pos, vals, width * 0.92, color=col, label=f"name >= {t:.2f}")
+    for xi, v in zip(pos, vals):
+        ax.text(xi, v + 1.2, f"{v:.1f}", ha="center", fontsize=7.5)
+ax.axhline(94.3, ls="--", lw=1.2, color=RISK)
+ax.text(len(radii) - 0.55, 95.5, "contractor: 94.3%", color=RISK, fontsize=8, ha="right")
+ax.set_xticks(x, [f"{int(r)} m" for r in radii])
+ax.set_xlabel("Blocking radius"); ax.set_ylabel("Recall, %")
+ax.set_ylim(0, 104); ax.set_title("Recall is robust to the matching parameters")
+ax.grid(axis="x", visible=False)
+ax.legend(fontsize=8, loc="lower right", framealpha=0.92)
+plt.tight_layout(); plt.show()
+```
+
+Полнота меняется в диапазоне примерно девяти процентных пунктов по всей сетке
+3 × 3 — от 61,8 % в самой строгой ячейке до **70,9 %** в самой мягкой (150 м,
+сходство названий >= 0,75). Даже эта наиболее щедрая настройка не дотягивает до
+94,3 % более чем на двадцать пунктов, так что разрыв не является вопросом
+подбора параметров.
+
+# Полнота по категориям — хуже всего классы риска {#sec-category}
+
+```{python}
+# | label: fig-recall-category
+# | fig-cap: "Полнота по исходным категориям 2022 года (эталон A). В скобках — число объектов."
+by_cat = pd.crosstab(local["category_orig"], local["tier"]).reindex(columns=TIER_ORDER, fill_value=0)
+by_cat["n"] = by_cat.sum(axis=1)
+by_cat["recall"] = 100 * (by_cat["exact"] + by_cat["probable"]) / by_cat["n"]
+by_cat = by_cat.sort_values("recall")
+labels = [f"{c.CATEGORY_EN.get(i, i)} ({int(n)})" for i, n in zip(by_cat.index, by_cat["n"])]
+risk_set = {"Спецмагазины алкоголя", "Точки продажи табака", "Пром. Объекты"}
+colors = [RISK if i in risk_set else ACCENT for i in by_cat.index]
+
+fig, ax = plt.subplots(figsize=(7.2, 3.8))
+ax.barh(labels, by_cat["recall"], color=colors, height=0.62)
+for y, v in enumerate(by_cat["recall"]):
+    ax.text(v + 1.2, y, f"{v:.1f}%", va="center", fontsize=8)
+ax.axvline(R_LOCAL, ls="--", lw=1, color=MIXED)
+ax.text(R_LOCAL + 1, -0.75, f"overall {R_LOCAL:.1f}%", color=MIXED, fontsize=7.5)
+ax.set_xlabel("Recall, %"); ax.set_xlim(0, 100)
+ax.set_title("Health infrastructure survives; risk objects do not")
+ax.grid(axis="y", visible=False)
+handles = [plt.Rectangle((0, 0), 1, 1, color=RISK), plt.Rectangle((0, 0), 1, 1, color=ACCENT)]
+ax.legend(handles, ["Risk classes", "Other classes"], fontsize=8, loc="lower right")
+plt.tight_layout(); plt.show()
+```
+
+Порядок независимо подтверждает то, о чём сообщала вторая поставка: медицинские
+организации воспроизводятся на **86,5 %**, тогда как точки продажи табака
+(**34,8 %**), спортивные объекты (**42,0 %**) и специализированные алкогольные
+магазины (**49,1 %**) находятся внизу списка. Промышленные объекты дают ноль, но
+всего на десяти записях.
+
+Это важно для существа исследования: именно те классы, на которых держится
+сопоставление «здоровье против риска», выгрузка 2026 года воспроизводит наименее
+надёжно.
+
+# Что на самом деле означает `gps_only` {#sec-gpsonly}
+
+541 запись с тиром `gps_only` на эталоне A — это не ошибки матчера. Разбор
+показывает, что речь идёт о реальной смене арендаторов:
+
+```{python}
+# | label: tbl-gps-samples
+# | tbl-cap: "Примеры пар gps_only: объект 2026 года стоит в нескольких метрах от объекта 2022 года, но под другим названием."
+g = local[local["tier"] == "gps_only"].copy()
+samp = g.nsmallest(8, "distance_m")[["name_orig", "v3_name_orig", "distance_m", "name_sim", "addr_sim"]]
+samp.columns = ["2022 object", "2026 object", "Dist, m", "Name sim.", "Addr sim."]
+samp["Dist, m"] = samp["Dist, m"].round(1)
+samp["Name sim."] = samp["Name sim."].round(2)
+samp["Addr sim."] = samp["Addr sim."].round(2)
+Markdown(samp.to_markdown(index=False))
+```
+
+Интерпретацию решают два числа:
+
+- Только **3 из 541** имеют сходство по token-set >= 0,90, то есть почти нет
+  настоящих совпадений, пропущенных алгоритмом оценки.
+- **388 из 541** имеют сходство адресов >= 0,90 — тот же адрес, другой бизнес.
+
+Между 2022 и 2026 годом помещение осталось, а занимающая его организация
+сменилась. Засчитывать такие случаи как «найдено», что и делает тир вероятных
+совпадений подрядчика, — значит превращать оборот арендаторов в видимость
+преемственности.
+
+# Два эталона 2022 года различаются {#sec-etalons}
+
+```{python}
+# | label: tbl-etalons
+# | tbl-cap: "Эталон A против эталона B по нормализованным ключам «название + адрес»."
+ka = set(zip(ref_local["name_orig"].map(c.norm_name),
+             ref_local["adress_orig"].map(c.norm_address)))
+ven_raw = m.normalise_vendor(c.load_ref_2022_vendor())
+kb = set(zip(ven_raw["name_orig"].map(c.norm_name),
+             ven_raw["adress_orig"].map(c.norm_address)))
+et = pd.DataFrame({
+    "Metric": ["Rows", "Unique name+address keys", "Duplicate rows",
+               "Keys shared with the other", "Keys unique to this file"],
+    "Etalon A": [len(ref_local), len(ka), len(ref_local) - len(ka),
+                 len(ka & kb), len(ka - kb)],
+    "Etalon B": [len(ven_raw), len(kb), len(ven_raw) - len(kb),
+                 len(ka & kb), len(kb - ka)],
+})
+Markdown(et.to_markdown(index=False))
+```
+
+Разрыв в 540 строк между двумя файлами — это в основном **дублирование, а не
+содержание**. Эталон B несёт `{python} f"{len(ven_raw) - len(kb):,}".replace(",", " ")`
+дублирующихся строк «название + адрес» против
+`{python} f"{len(ref_local) - len(ka):,}".replace(",", " ")` у эталона A. По уникальным ключам это
+почти один и тот же документ: **99,8 %** ключей эталона A присутствуют в эталоне
+B, при этом лишь 4 ключа уникальны для A и 90 — для B (113 строк, смещённых в
+сторону точек продажи табака и общепита в Октябрьском округе).
+
+Таким образом, эталон A — практически строгое подмножество эталона B. Полнота у
+них неразличима (@sec-headline), поэтому выбор эталона не определяет вывод, — но
+любой *подсчёт*, взятый из эталона B, завышен из-за дублей.
+
+# Прирост: что добавляет выгрузка 2026 года {#sec-growth}
+
+```{python}
+# | label: tbl-growth
+# | tbl-cap: "Выгрузка 2026 года в трёх округах 2022 года с разбивкой по тому, воспроизводит ли она объект 2022 года."
+res = m.match(ref_local, three)
+lab = m.reverse_coverage(three, res)
+three["bench"] = lab
+gt = pd.crosstab(three["okrug_key"], three["bench"])
+gt.loc["TOTAL"] = gt.sum()
+gt["Total"] = gt.sum(axis=1)
+# The share is rendered as text so the count columns stay clean integers (a
+# numeric percentage column would float-format the whole table), and numparse
+# is disabled on it so tabulate does not strip the trailing zero back off.
+gt["New, %"] = (100 * gt["New in v3"] / gt["Total"]).map("{:.1f}".format)
+gt.index.name = "Okrug"
+Markdown(gt.to_markdown(disable_numparse=[4]))
+```
+
+Выгрузка 2026 года содержит 5 614 объектов по трём округам против 1 753 у
+эталона 2022 года — трёхкратное расширение, из которого **81 %** составляет новый
+материал. Число воспроизведённых объектов (1 065) меньше числа сопоставленных
+(1 126), потому что несколько записей 2022 года приходятся на один и тот же
+объект 2026 года, что неизбежно при дублирующихся ключах в обоих файлах.
+
+# Карта: происхождение и эталон рядом {#sec-map}
+
+```{python}
+# | label: fig-map
+# | fig-cap: "Три округа 2022 года. Слева: какие источники содержат каждый объект 2026 года. Справа: какие объекты 2026 года воспроизводят объект 2022 года."
+fig, axes = plt.subplots(1, 2, figsize=(7.2, 4.4))
+
+prov_order = ["confirmed_by_2gis_and_osm", "only_2gis", "only_osm"]
+prov_color = {"confirmed_by_2gis_and_osm": GREEN, "only_2gis": PURPLE, "only_osm": ACCENT}
+for s in prov_order:
+    sub = three[three["verification_status"] == s]
+    axes[0].scatter(sub["longitude"], sub["latitude"], s=5, alpha=0.55,
+                    color=prov_color[s], label=f"{c.STATUS_EN[s]} ({len(sub):,})")
+axes[0].set_title("Source provenance", fontsize=10)
+
+bench_color = {"Reproduced from 2022": GREEN, "New in v3": OLD}
+for b in ["New in v3", "Reproduced from 2022"]:
+    sub = three[three["bench"] == b]
+    axes[1].scatter(sub["longitude"], sub["latitude"], s=5, alpha=0.55,
+                    color=bench_color[b], label=f"{b} ({len(sub):,})")
+axes[1].set_title("2022 benchmark outcome", fontsize=10)
+
+for ax in axes:
+    ax.set_xlabel("Longitude")
+    ax.set_aspect(1 / np.cos(np.deg2rad(64.54)))
+    ax.legend(loc="upper left", fontsize=6, markerscale=2.2, framealpha=0.9)
+    try:
+        # Tiles are cached in data/tile_cache, so only the first render needs
+        # internet access; offline we fall back to the plain scatter.
+        import contextily as ctx
+        tile_cache = c.ROOT / "data" / "tile_cache"
+        tile_cache.mkdir(exist_ok=True)
+        ctx.set_cache_dir(str(tile_cache))
+        ctx.add_basemap(ax, crs="EPSG:4326", source=ctx.providers.CartoDB.Positron,
+                        attribution_size=4)
+        ax.grid(visible=False)
+    except Exception:
+        ax.grid(alpha=0.2)
+axes[0].set_ylabel("Latitude")
+plt.tight_layout(); plt.show()
+```
+
+Две панели отвечают на разные вопросы, и смешивать их не следует. Подтверждение
+двумя источниками везде редко (@sec-thirdsource), тогда как объекты,
+воспроизведённые из 2022 года, сосредоточены в центре — там же, где проходило
+само исследование 2022 года, — а новый материал заполняет периферию.
+
+# Третий источник подтверждает немногое {#sec-thirdsource}
+
+```{python}
+# | label: tbl-thirdsource
+# | tbl-cap: "Подтверждение эталона 2022 года и выгрузки 2026 года по файлу export_base_688669."
+def nfc(s):
+    return unicodedata.normalize("NFC", str(s)) if pd.notna(s) else s
+
+# load_export_base() already normalises the header row to NFC; the values are
+# folded here as well so a decomposed data cell cannot silently miss a join.
+eb = c.load_export_base()
+eb_names = eb["Название компании"].map(nfc).map(c.norm_name)
+eb_addr = eb["Адрес компании"].map(nfc).map(c.norm_address)
+eb_keys = set(zip(eb_names, eb_addr))
+eb_nameset = set(eb_names)
+
+ref_pairs = ka
+ref_names = set(ref_local["name_orig"].map(c.norm_name))
+v3_pairs = set(zip(three["name_orig"].map(c.norm_name),
+                   three["adress_orig"].map(c.norm_address)))
+v3_names = set(three["name_orig"].map(c.norm_name))
+
+ts = pd.DataFrame({
+    "Compared against export_base": ["2022 benchmark (etalon A)", "2026 export, 3 okrugs"],
+    "Keys": [len(ref_pairs), len(v3_pairs)],
+    "Name+address hit": [len(ref_pairs & eb_keys), len(v3_pairs & eb_keys)],
+    "%": [round(100 * len(ref_pairs & eb_keys) / len(ref_pairs), 1),
+          round(100 * len(v3_pairs & eb_keys) / len(v3_pairs), 1)],
+    "Name-only hit": [len(ref_names & eb_nameset), len(v3_names & eb_nameset)],
+    "% ": [round(100 * len(ref_names & eb_nameset) / len(ref_names), 1),
+           round(100 * len(v3_names & eb_nameset) / len(v3_names), 1)],
+})
+Markdown(ts.to_markdown(index=False))
+```
+
+`export_base_688669` — коммерческий справочник компаний на 10 557 записей,
+переданный вместе с этой поставкой. Как третье мнение он слаб, и два жёстких
+ограничения не дают ему сделать больше:
+
+- **Нет поля округа.** `Район города` пусто для **всех 10 557 записей**. Округ
+  можно восстановить только по координатам.
+- **Координаты округлены до трёх знаков** — это около ±55 м на данной широте,
+  грубее самого радиуса блокировки в 50 м. Поэтому файл вообще не может
+  участвовать в сопоставлении по GPS; его можно соединять только по названию и
+  адресу.
+
+На этом основании он подтверждает 3,6 % записей выгрузки 2026 года по трём
+округам — по названию и адресу, и 19,6 % — только по названию. Это
+вспомогательный справочник, а не независимая проверка.
+
+# Оговорки {#sec-caveats}
+
+- **Дублирующиеся ключи есть во всех файлах.** Эталон A содержит 50
+  дублирующихся пар «название + адрес», выгрузка 2026 года — 62, эталон B —
+  около 515. Любой подсчёт по записям приблизителен с точностью до этого порядка
+  величин.
+- **Написание округов в файле 2022 года непоследовательно** — `Майская Горка`
+  (245 строк) и `Майская горка` (2). Здесь оба варианта сводятся к одному ключу;
+  наивный `value_counts()` по исходному столбцу разделил бы их.
+- **`gps_only` — это результат, а не остаток.** Он означает, что объект 2026 года
+  существует в этом месте под другим названием. Смена ли это арендатора или
+  расхождение в наименовании, решается по каждой записи, и цифры из @sec-gpsonly
+  говорят в пользу смены арендатора.
+- **Родовые названия ограничивают достижимую полноту.** 88 из 1 753 записей
+  эталона A несут название-заглушку (`Продовольственный магазин`, `Киоск`,
+  `Продуктовый магазин`). Их полнота — **46,6 %** против **65,6 %** у 1 665
+  записей с нормальными названиями. Матчер, основанный на названиях, не способен
+  их опознать; это дефект источника 2022 года, а не выгрузки 2026 года.
+- **Полнота измеряется относительно всей выгрузки**, а не подмножества по трём
+  округам. Ограничение цели тремя округами меняет полноту лишь с 64,6 % до
+  64,2 %; разница — это объекты 2022 года, чей аналог 2026 года отнесён к
+  соседнему округу.
+- Матчер берёт **исходные** координаты каждой записи 2022 года, а не
+  исправленные подрядчиком, поскольку сопоставление по координате, полученной из
+  сопоставления, замыкалось бы само на себя.
+
+# Что это значит для исследования
+
+1. **Опираться на тир подтверждённых совпадений, а не на заявленную цифру.**
+   Примерно две трети объектов 2022 года воспроизводятся как тот же бизнес по
+   тому же адресу. Продольное сопоставление следует планировать исходя из этого,
+   а не из 94,3 %.
+2. **С особой осторожностью относиться к классам риска.** Табак, алкоголь и спорт
+   воспроизводятся на 35–49 %, заметно ниже медицинского класса с его 86,5 %.
+   Сопоставление «здоровье против риска» между 2022 и 2026 годом наследует эту
+   асимметрию и будет занижать подверженность риску, если её не скорректировать.
+3. **Выгрузка 2026 года — это новая перепись, а не обновление.** 81 % её
+   содержания по трём округам — новый материал. Её следует анализировать как
+   свежий срез, пересекающийся со срезом 2022 года, а не как его ревизию.
