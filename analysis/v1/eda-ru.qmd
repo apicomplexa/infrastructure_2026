@@ -1,0 +1,650 @@
+---
+title: "Городская инфраструктура Архангельска — разведочный анализ данных"
+subtitle: "Выгрузка ИнфраструктураРФ, 2026-06-28"
+author:
+  - "Северный государственный медицинский университет"
+  - "проект «Инфраструктура»"
+date: today
+lang: ru
+format:
+  pdf:
+    pdf-engine: xelatex
+    mainfont: "Arial"
+    sansfont: "Arial"
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    fig-width: 7.2
+    fig-height: 4.4
+    fig-align: center
+    fig-pos: "H"
+    geometry:
+      - margin=2.2cm
+    colorlinks: true
+execute:
+  echo: false
+  warning: false
+  message: false
+jupyter: python3
+---
+
+```{python}
+# | tags: [parameters]
+# Какой набор данных анализировать: "enriched" (полная городская выгрузка)
+# или "health" (подвыборка «здоровье и риски»). Переопределение:
+#   pixi run eda-health-ru
+dataset = "enriched"
+```
+
+```{python}
+# | label: setup
+import sys
+from pathlib import Path
+import numpy as np
+import pandas as pd
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+mpl.rcParams.update({
+    "font.family": "DejaVu Sans",   # полная поддержка кириллицы в подписях
+    "figure.dpi": 150,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "axes.grid": True,
+    "grid.alpha": 0.25,
+    "axes.titlesize": 12,
+    "axes.titleweight": "bold",
+})
+sns.set_palette("colorblind")
+
+ACCENT = "#2b6cb0"   # инфраструктура здоровья / нейтральный основной
+RISK = "#c05621"     # факторы риска
+MIXED = "#6b7280"
+
+# Locate the repository root, so this report may live at any depth under it.
+_root = next(p for p in [Path.cwd(), *Path.cwd().parents]
+             if (p / "pixi.toml").exists())
+sys.path.insert(0, str(_root / "src"))
+from arkhinfra import paths as P  # noqa: E402
+
+RAW = P.RAW
+
+def fmt(v):
+    """Число с русским разделителем тысяч (пробел вместо запятой; NBSP нельзя —
+    инлайн-выражения Quarto экранируют его в литерал \\xa0)."""
+    return f"{v:,}".replace(",", " ")
+
+DISTRICT_RU = {
+    "Октябрьский округ": "Октябрьский", "Округ Майская горка": "Майская горка",
+    "Соломбальский округ": "Соломбальский", "Округ Варавино-Фактория": "Варавино-Фактория",
+    "Северный округ": "Северный", "Исакогорский и Цигломенский округа": "Исакогорский и Цигломенский",
+    "Ломоносовский округ": "Ломоносовский", "Маймаксанский округ": "Маймаксанский",
+}
+VERIF_RU = {
+    "only_osm": "Только OSM", "only_2gis": "Только 2GIS",
+    "confirmed_by_2gis_and_osm": "OSM + 2GIS (подтверждено)",
+}
+
+# Переименование (русских) колонок health-выгрузки в каноническую схему.
+HEALTH_RENAME = {
+    "Статус проверки": "verification_status", "Источники": "providers",
+    "Количество источников": "provider_count", "Категория": "category_orig",
+    "Тип": "type_orig", "Организация": "name_orig", "Город": "city_orig",
+    "Округ/район": "district_orig", "Адрес": "adress_orig", "Широта": "latitude",
+    "Долгота": "longitude", "Сайт": "website_orig", "Телефон": "phone_orig",
+    "Часы работы": "opening_hours_orig", "Дата открытия": "opening_date_orig",
+    "Тип влияния": "impact", "Полезные группы": "useful_groups",
+    "Группы риска": "risk_groups",
+}
+
+
+def load_dataset(which):
+    """Вернуть (df, meta) в канонической схеме для любого из наборов."""
+    if which == "health":
+        df = pd.read_excel(RAW / "objects_arkhangelsk_2026-06-28_health.xlsx",
+                           sheet_name="Объекты").rename(columns=HEALTH_RENAME)
+        meta = {"label": "Подвыборка «здоровье и риски»", "has_impact": True}
+    else:
+        df = pd.read_csv(RAW / "objects_arkhangelsk_2026-06-28_enriched.csv",
+                         sep=";", encoding="utf-8-sig", low_memory=False)
+        meta = {"label": "Полная обогащённая выгрузка", "has_impact": False}
+    for col in ("latitude", "longitude"):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["provider_count"] = pd.to_numeric(df["provider_count"], errors="coerce")
+    df["category_ru"] = df["category_orig"]
+    df["district_ru"] = df["district_orig"].map(DISTRICT_RU).fillna(df["district_orig"])
+    df["verif_ru"] = df["verification_status"].map(VERIF_RU).fillna(df["verification_status"])
+    return df, meta
+
+
+# ---- Перекодировка любого объекта в таксономию здоровья 2022 (7 классов) ----
+CLASS_2022 = ["Медицинские организации", "Спортивные объекты", "Продуктовые магазины",
+              "Общепит", "Алкогольные магазины", "Точки продажи табака",
+              "Промышленные объекты"]
+OTHER_2022 = "Прочее (вне схемы 2022)"
+ORDER_2022 = CLASS_2022 + [OTHER_2022]
+# метки исходного файла 2022 года -> канонический класс
+SRC2022_RU = {
+    "Медицинские организации": "Медицинские организации",
+    "Спортивные объекты": "Спортивные объекты",
+    "Магазины": "Продуктовые магазины", "Общепит": "Общепит",
+    "Спецмагазины алкоголя": "Алкогольные магазины",
+    "Точки продажи табака": "Точки продажи табака",
+    "Пром. Объекты": "Промышленные объекты",
+}
+GROCERY_TYPES = {
+    "продуктовый магазин", "супермаркет", "гипермаркет", "овощи и фрукты",
+    "фрукты-овощи", "булочная", "кулинария", "ярмарка", "рынок",
+    "магазин: confectionery", "кондитерская", "мясной магазин",
+    "рыбный магазин", "молочный магазин", "магазин у дома",
+}
+
+
+def _has(s, *words):
+    m = np.zeros(len(s), dtype=bool)
+    for w in words:
+        m |= s.str.contains(w, regex=False, na=False)
+    return m
+
+
+def recode_2022(df):
+    """Отнести объекты к таксономии 2022 по категории + типу + названию."""
+    cat = df["category_orig"].fillna("").astype(str)
+    t = df["type_orig"].fillna("").astype(str).str.lower()
+    blob = (cat.str.lower() + " | " + t + " | "
+            + df["name_orig"].fillna("").astype(str).str.lower())
+
+    tobacco = (cat == "Точки продажи табака") | _has(blob, "табак", "вейп", "сигарет", "кальян", "vape")
+    alcohol = _has(t, "алкогол") | _has(blob, "алкомаркет", "винотек") | (_has(t, "винный") & _has(t, "магазин"))
+    medical = (cat == "Медицинские организации") | _has(
+        blob, "аптек", "поликлин", "больниц", "стоматолог", "клиник", "врач",
+        "диагност", "лаборатор", "диспансер", "госпит", "медиц", "оптика",
+        "реабилит", "санатор", "профилакт", "роддом", "родильн", "фельдшер")
+    sport = (cat == "Спортивные объекты") | _has(
+        blob, "спорт", "фитнес", "бассейн", "стадион", "тренаж", "воркаут",
+        "каток", "манеж", "йога") | _has(t, "парк", "сквер", "набережн")
+    catering = cat.isin(["Общепит", "фастфуд"]) | _has(
+        t, "кафе", "фастфуд", "бар", "ресторан", "паб", "кофейн", "столов",
+        "закусочн", "пиццери", "суши", "бистро")
+    grocery = t.isin(GROCERY_TYPES)
+    industrial = _has(blob, "завод", "энергокомплекс", "тэц", "гэс", "фабрика", "промышл", "комбинат")
+
+    return pd.Series(np.select(
+        [tobacco, alcohol, medical, sport, catering, grocery, industrial],
+        ["Точки продажи табака", "Алкогольные магазины", "Медицинские организации",
+         "Спортивные объекты", "Общепит", "Продуктовые магазины",
+         "Промышленные объекты"],
+        default=OTHER_2022), index=df.index)
+
+
+def barh(series, title, xlabel, color=ACCENT, fmt_pct=False, figsize=(7.2, 4.4)):
+    s = series.sort_values(ascending=True)
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.barh(s.index, s.values, color=color)
+    total = s.sum()
+    for y, v in enumerate(s.values):
+        lbl = f"{fmt(v)} ({v/total*100:.0f}%)" if fmt_pct else fmt(v)
+        ax.text(v, y, " " + lbl, va="center", ha="left", fontsize=8)
+    ax.set_xlabel(xlabel); ax.set_title(title)
+    ax.margins(x=0.16); ax.grid(axis="y", visible=False)
+    plt.tight_layout(); plt.show()
+
+
+df, meta = load_dataset(dataset)
+df["category_2022"] = recode_2022(df)
+
+n_obj = len(df)
+n_cat = df["category_orig"].nunique()
+n_type = df["type_orig"].nunique()
+n_dist = df["district_orig"].nunique()
+DS_LABEL = meta["label"]
+```
+
+# Введение
+
+Настоящий отчёт — **первичный разведочный анализ данных (EDA)** текущего этапа
+инфраструктурного проекта Северного государственного медицинского университета.
+Исследовательский вопрос — унаследованный от этапа 2022 года (см.
+[`docs/report_arkhangelsk_2022.md`](../../docs/report_arkhangelsk_2022.md)) —
+**как значимая для здоровья городская инфраструктура и факторы риска
+распределены по округам Архангельска**.
+
+Данные получены программой *ИнфраструктураРФ* (см.
+[`docs/infrastructure_rf.md`](../../docs/infrastructure_rf.md)) для Архангельска
+по состоянию на **2026-06-28**. Отчёт параметризован и может быть собран как для
+полной городской выгрузки, так и для подвыборки «здоровье и риски».
+
+::: {.callout-note}
+## Анализируемый набор: **`{python} DS_LABEL`** — `{python} fmt(n_obj)` объектов
+`enriched` = полная городская опись · `health` = объекты, предварительно
+отфильтрованные до инфраструктуры здоровья и факторов риска. Другой вариант:
+`pixi run eda-health-ru`.
+:::
+
+```{python}
+# | label: overview-table
+overview = pd.DataFrame({
+    "Показатель": ["Объекты (строки)", "Категории", "Типы объектов", "Округа",
+                   "Город", "Покрытие координатами", "Покрытие адресами"],
+    "Значение": [fmt(n_obj), f"{n_cat}", f"{n_type}", f"{n_dist}", "Архангельск",
+                 f"{df['latitude'].notna().mean()*100:.0f}%",
+                 f"{df['adress_orig'].notna().mean()*100:.1f}%"],
+})
+overview.style.hide(axis="index")
+```
+
+# Качество данных и верификация источников
+
+Каждый объект содержит метаданные о происхождении и верификации; доверие выше,
+когда объект подтверждён более чем одним источником.
+
+```{python}
+# | label: fig-verification
+# | fig-cap: "Объекты по статусу верификации (уверенность в источнике данных)."
+vc = df["verif_ru"].value_counts()
+barh(vc, "Статус верификации", "Число объектов", fmt_pct=True, figsize=(7.2, 2.9))
+```
+
+```{python}
+# | label: verif-note
+n_multi = int((df["provider_count"] >= 2).sum())
+osm_only = int((df["verification_status"] == "only_osm").sum())
+```
+
+Лишь **`{python} fmt(n_multi)`** объектов
+(`{python} f"{n_multi/n_obj*100:.1f}"`%) подтверждены одновременно OpenStreetMap
+и 2GIS; остальные происходят из единственного источника, а
+**`{python} f"{osm_only/n_obj*100:.0f}"`%** опираются только на OpenStreetMap.
+Абсолютные количества, таким образом, являются **нижними оценками**, что
+согласуется с выводом 2022 года: ~64% объектов были найдены в OSM.
+
+## Полнота атрибутов
+
+```{python}
+# | label: fig-completeness
+# | fig-cap: "Доля объектов с заполненным атрибутом."
+fields = {"Адрес": "adress_orig", "Часы работы": "opening_hours_orig",
+          "Телефон": "phone_orig", "Сайт": "website_orig", "Дата открытия": "opening_date_orig"}
+cov = pd.Series({k: df[v].notna().mean() * 100 for k, v in fields.items()}).sort_values()
+fig, ax = plt.subplots(figsize=(7.2, 3.0))
+ax.barh(cov.index, cov.values, color=ACCENT)
+for y, v in enumerate(cov.values):
+    ax.text(v, y, f" {v:.0f}%", va="center", fontsize=8)
+ax.set_xlim(0, 100); ax.set_xlabel("% объектов с заполненным полем")
+ax.set_title("Полнота атрибутов"); ax.grid(axis="y", visible=False)
+plt.tight_layout(); plt.show()
+```
+
+Координаты и адреса заполнены почти полностью, поэтому **пространственный анализ
+надёжен**. Контактные данные заполнены частично, а *дата открытия* практически
+отсутствует и должна быть исключена из дальнейшего анализа.
+
+# Состав по категориям
+
+```{python}
+# | label: fig-categories
+# | fig-cap: "Объекты по категориям (исходные метки выгрузки)."
+cat = df["category_ru"].value_counts()
+h = max(3.2, 0.34 * len(cat) + 1.2)
+barh(cat, "Объекты по категориям", "Число объектов", fmt_pct=True, figsize=(7.2, h))
+```
+
+## Наиболее частые типы объектов
+
+```{python}
+# | label: fig-types
+# | fig-cap: "Топ-20 типов объектов (type_orig, исходные метки)."
+typ = df["type_orig"].value_counts().head(20)
+barh(typ, "Топ-20 типов объектов", "Число объектов", figsize=(7.2, 5.6))
+```
+
+# Перекодировка в таксономию 2022 года
+
+Этап 2022 года использовал целевую **7-классную таксономию, значимую для
+здоровья**: *медицинские организации*, *спортивные объекты*, *продуктовые
+магазины*, *общепит*, *алкогольные магазины*, *точки продажи табака* и
+*промышленные объекты*. Текущая выгрузка использует более широкую универсальную
+систему категорий, в которой, например, `Магазины` смешивает продуктовые с
+одеждой, хозтоварами и алкоголем.
+
+Чтобы сделать два этапа сопоставимыми, каждый текущий объект **перекодируется в
+таксономию 2022 года** (новая колонка `category_2022`) по прозрачному правилу
+над `category_orig`, `type_orig` и `name_orig` — например, аптеки и клиники →
+*медицинские организации*; `Алкогольный магазин` → *алкогольные магазины*;
+кальянные → *точки продажи табака* (как в 2022 году); магазины продуктового
+профиля → *продуктовые магазины*. Объекты вне таксономии здоровья (одежда,
+услуги, банки, …) помечаются как *прочее*. Полная таблица соответствий
+«категория/тип → класс», включая всё отнесённое к категории *прочее*, приведена
+в дополнении в конце отчёта (@tbl-recode-map).
+
+```{python}
+# | label: fig-recode
+# | fig-cap: "Текущие объекты, перекодированные в таксономию 2022 года."
+rc = df["category_2022"].value_counts().reindex(ORDER_2022).dropna()
+order = rc.sort_values()
+fig, ax = plt.subplots(figsize=(7.2, 4.2))
+ax.barh(order.index, order.values,
+        color=[RISK if c in ("Алкогольные магазины", "Точки продажи табака") else
+               (MIXED if c.startswith("Прочее") else ACCENT) for c in order.index])
+for y, v in enumerate(order.values):
+    ax.text(v, y, f" {fmt(v)} ({v/n_obj*100:.0f}%)", va="center", fontsize=8)
+ax.set_xlabel("Число объектов"); ax.set_title("Перекодировка в таксономию 2022")
+ax.margins(x=0.16); ax.grid(axis="y", visible=False)
+plt.tight_layout(); plt.show()
+
+in_scheme = int((df["category_2022"] != OTHER_2022).sum())
+```
+
+**`{python} fmt(in_scheme)`** объектов
+(`{python} f"{in_scheme/n_obj*100:.0f}"`%) текущего набора данных отображаются в
+таксономию здоровья 2022 года; остальные находятся вне её охвата.
+
+## Сравнение с классификацией 2022 года
+
+```{python}
+# | label: tbl-compare
+# | tbl-cap: "Распределение классов: этап 2022 года и текущий набор (доли внутри 7-классной схемы)."
+d22 = pd.read_excel(RAW / "objects_3_districts_2022.xlsx")
+c22 = d22["category_orig"].map(SRC2022_RU).value_counts()
+cur = df.loc[df["category_2022"] != OTHER_2022, "category_2022"].value_counts()
+
+cmp = pd.DataFrame(index=CLASS_2022)
+cmp["2022, N"] = c22.reindex(CLASS_2022).fillna(0).astype(int)
+cmp["2022, %"] = (cmp["2022, N"] / cmp["2022, N"].sum() * 100).round(1)
+cmp["Текущий, N"] = cur.reindex(CLASS_2022).fillna(0).astype(int)
+cmp["Текущий, %"] = (cmp["Текущий, N"] / cmp["Текущий, N"].sum() * 100).round(1)
+tot = pd.DataFrame({"2022, N": [cmp["2022, N"].sum()], "2022, %": [100.0],
+                    "Текущий, N": [cmp["Текущий, N"].sum()], "Текущий, %": [100.0]},
+                   index=["Итого (в схеме)"])
+cmp_disp = pd.concat([cmp, tot]).reset_index().rename(columns={"index": "Класс 2022"})
+(cmp_disp.style.hide(axis="index")
+ .format({"2022, %": "{:.1f}", "Текущий, %": "{:.1f}"}))
+```
+
+Данные 2022 года охватывали только три округа (1 753 объекта), тогда как текущая
+выгрузка общегородская, поэтому сравнение наиболее осмысленно по **долям**.
+*Продуктовые магазины*, *медицинские организации* и *общепит* доминируют в
+значимой для здоровья инфраструктуре на обоих этапах; перекодировка позволяет на
+последующих этапах отслеживать каждый класс на сопоставимой основе.
+
+# Пространственное распределение и распределение по округам
+
+Все объекты геокодированы внутри ограничивающего прямоугольника Архангельска.
+
+```{python}
+# | label: fig-map
+# | fig-cap: "Пространственное распределение объектов с окраской по округам на картографической подложке OpenStreetMap/CARTO."
+top_d = df["district_ru"].value_counts().index.tolist()
+fig, ax = plt.subplots(figsize=(7.2, 6.0))
+for color, d in zip(sns.color_palette("colorblind", len(top_d)), top_d):
+    sub = df[df["district_ru"] == d]
+    ax.scatter(sub["longitude"], sub["latitude"], s=6, alpha=0.5,
+               color=color, label=f"{d} ({fmt(len(sub))})")
+ax.set_xlabel("Долгота"); ax.set_ylabel("Широта"); ax.set_title("Объекты по округам")
+ax.set_aspect(1 / np.cos(np.deg2rad(64.55)))
+try:
+    # Подложка с реальной картой. Тайлы кэшируются в data/tile_cache, поэтому
+    # интернет нужен только при первой сборке; офлайн остаётся обычный scatter.
+    import contextily as ctx
+    tile_cache = RAW.parent / "tile_cache"
+    tile_cache.mkdir(exist_ok=True)
+    ctx.set_cache_dir(str(tile_cache))
+    ctx.add_basemap(ax, crs="EPSG:4326", source=ctx.providers.CartoDB.Positron,
+                    attribution_size=5)
+    ax.grid(visible=False)
+except Exception:
+    ax.grid(alpha=0.2)
+ax.legend(loc="upper left", fontsize=7, markerscale=2, framealpha=0.9)
+plt.tight_layout(); plt.show()
+```
+
+```{python}
+# | label: fig-districts
+# | fig-cap: "Число объектов по округам."
+dist = df["district_ru"].value_counts()
+barh(dist, "Объекты по округам", "Число объектов", fmt_pct=True, figsize=(7.2, 3.8))
+okt_share = dist.iloc[0] / n_obj * 100
+```
+
+Замечание о качестве данных: привязка к округам смещена
+
+**`{python} f"{okt_share:.0f}"`% всех объектов отнесены к одному округу
+(Октябрьскому).** Это не согласуется ни с географией Архангельска, ни с этапом
+2022 года, где Октябрьский, Ломоносовский округа и Майская горка имели
+сопоставимые количества. Наиболее вероятная причина — автоматический шаг
+привязки к округам в выгрузке. **Показатели по округам ниже следует считать
+предварительными, а логику привязки — перепроверить до любых содержательных
+пространственных выводов.**
+
+# Частоты классов таксономии 2022 по округам
+
+Ключевая перекрёстная таблица проекта: **как перекодированные значимые для
+здоровья классы распределены по округам.** Тепловая карта аннотирована числом
+объектов; итоги — в таблице ниже.
+
+```{python}
+# | label: fig-recode-heatmap
+# | fig-cap: "Частоты перекодированных классов таксономии 2022 по округам (число объектов)."
+top_dists = df["district_ru"].value_counts().index[:6]
+sub = df[df["category_2022"] != OTHER_2022]
+ct = pd.crosstab(sub["category_2022"], sub["district_ru"])
+ct = ct.reindex(index=[c for c in CLASS_2022 if c in ct.index],
+                columns=[d for d in top_dists if d in ct.columns])
+fig, ax = plt.subplots(figsize=(7.4, 4.6))
+sns.heatmap(ct, annot=True, fmt="d", cmap="Blues", linewidths=0.5,
+            linecolor="white", cbar_kws={"label": "объектов"}, ax=ax)
+ax.set_xlabel(""); ax.set_ylabel(""); ax.set_title("Частоты классов 2022 по округам")
+plt.xticks(rotation=30, ha="right"); plt.tight_layout(); plt.show()
+```
+
+```{python}
+# | label: tbl-recode-freq
+# | tbl-cap: "Таблица частот перекодированных классов таксономии 2022 по округам (с итогами). «Прочее» = вне схемы 2022."
+from IPython.display import Markdown
+
+# Округа — строками, классы — короткими заголовками колонок; вывод
+# markdown-таблицей (не Styler-HTML): таблица с 10 колонками округов
+# не помещается на страницу.
+SHORT_2022 = {"Медицинские организации": "Мед.", "Спортивные объекты": "Спорт",
+              "Продуктовые магазины": "Прод.", "Общепит": "Общепит",
+              "Алкогольные магазины": "Алк.", "Точки продажи табака": "Табак",
+              "Промышленные объекты": "Пром.", OTHER_2022: "Прочее"}
+full = pd.crosstab(df["district_ru"], df["category_2022"], margins=True, margins_name="Все")
+keep_cols = [c for c in CLASS_2022 if c in full.columns] + \
+            ([OTHER_2022] if OTHER_2022 in full.columns else []) + ["Все"]
+keep_rows = list(df["district_ru"].value_counts().index) + ["Все"]
+full = full.reindex(index=keep_rows, columns=keep_cols).rename(columns=SHORT_2022)
+Markdown(full.reset_index().rename(columns={"district_ru": "Округ"})
+         .to_markdown(index=False))
+```
+
+# Инфраструктура здоровья и факторы риска
+
+```{python}
+# | label: healthrisk-compute
+t = df["type_orig"].fillna("").astype(str).str.lower()
+cat = df["category_orig"].fillna("").astype(str)
+blob = (cat.str.lower() + " | " + t + " | " + df["name_orig"].fillna("").str.lower())
+
+health_sub = {
+    "Медицина": df["category_2022"].eq("Медицинские организации"),
+    "Спорт и отдых": df["category_2022"].eq("Спортивные объекты"),
+}
+risk_sub = {
+    "Фастфуд": cat.eq("фастфуд") | _has(t, "фастфуд"),
+    "Алкоголь": df["category_2022"].eq("Алкогольные магазины"),
+    "Табак": df["category_2022"].eq("Точки продажи табака"),
+    "Бары и пабы": _has(t, "бар", "паб") & ~_has(t, "барбер"),
+    "Кальянные и ночной досуг": _has(blob, "кальян", "ночной клуб", "лаунж"),
+}
+hr = pd.DataFrame({
+    "Группа": ["Инфраструктура здоровья"] * len(health_sub) + ["Фактор риска"] * len(risk_sub),
+    "Подгруппа": list(health_sub) + list(risk_sub),
+    "Объекты": [int(m.sum()) for m in health_sub.values()] + [int(m.sum()) for m in risk_sub.values()],
+})
+health_mask = np.logical_or.reduce(list(health_sub.values()))
+risk_mask = np.logical_or.reduce(list(risk_sub.values()))
+n_health, n_risk = int(health_mask.sum()), int(risk_mask.sum())
+```
+
+Прозрачная эвристика (на основе перекодировки 2022 года и ключевых слов в типах)
+разделяет **инфраструктуру, поддерживающую здоровье**, и **факторы риска**. По
+ней набор данных содержит **`{python} fmt(n_health)`** объектов инфраструктуры
+здоровья и **`{python} fmt(n_risk)`** объектов-факторов риска.
+
+```{python}
+# | label: fig-healthrisk
+# | fig-cap: "Инфраструктура здоровья (синий) и факторы риска (оранжевый)."
+order = hr.sort_values("Объекты")
+fig, ax = plt.subplots(figsize=(7.2, 3.8))
+ax.barh(order["Подгруппа"], order["Объекты"],
+        color=[ACCENT if g == "Инфраструктура здоровья" else RISK for g in order["Группа"]])
+for y, v in enumerate(order["Объекты"]):
+    ax.text(v, y, f" {fmt(v)}", va="center", fontsize=8)
+ax.set_xlabel("Число объектов")
+ax.set_title("Инфраструктура здоровья (синий) и факторы риска (оранжевый)")
+ax.grid(axis="y", visible=False); ax.margins(x=0.12)
+plt.tight_layout(); plt.show()
+```
+
+```{python}
+# | label: tbl-healthrisk-district
+# | tbl-cap: "Объекты здоровья и риска по округам (предварительно — см. замечание о привязке к округам)."
+tmp = df.copy()
+tmp["is_health"], tmp["is_risk"] = health_mask, risk_mask
+g = tmp.groupby("district_ru").agg(**{
+    "Объекты": ("name_orig", "size"),
+    "Здоровье": ("is_health", "sum"), "Риск": ("is_risk", "sum")})
+g["Здоровье:Риск"] = (g["Здоровье"] / g["Риск"].replace(0, np.nan)).round(2)
+g = g.sort_values("Объекты", ascending=False)
+(g.reset_index().rename(columns={"district_ru": "Округ"})
+ .style.hide(axis="index").format({"Здоровье:Риск": "{:.2f}"}, na_rep="—"))
+```
+
+```{python}
+# | label: health-native
+# | output: asis
+if meta["has_impact"]:
+    print("## Собственная классификация здоровья (выгрузка health)\n")
+    print("Health-выгрузка содержит собственную классификацию программы, "
+          "которая используется здесь как авторитетное представление.\n")
+```
+
+```{python}
+# | label: impact-block
+# | output: asis
+def explode_groups(series):
+    s = series.dropna().astype(str).str.split(";").explode().str.strip()
+    return s[s != ""].value_counts()
+
+
+if meta["has_impact"]:
+    imp = df["impact"].value_counts()
+    ct_imp = pd.crosstab(df["impact"], df["district_ru"])
+    order_cols = df["district_ru"].value_counts().index
+    ct_imp = ct_imp.reindex(columns=[c for c in order_cols if c in ct_imp.columns])
+
+    imp_ord = imp.sort_values()
+    fig, ax = plt.subplots(figsize=(7.2, 2.5))
+    ax.barh(imp_ord.index, imp_ord.values,
+            color=[RISK if "риск" in i.lower() else
+                   (MIXED if "смешан" in i.lower() else ACCENT) for i in imp_ord.index])
+    for y, v in enumerate(imp_ord.values):
+        ax.text(v, y, f" {fmt(v)}", va="center", fontsize=8)
+    ax.set_title("Тип влияния"); ax.set_xlabel("Число объектов")
+    ax.grid(axis="y", visible=False); ax.margins(x=0.16)
+    plt.tight_layout(); plt.show()
+
+    top6 = df["district_ru"].value_counts().index[:6]
+    ct6 = ct_imp.reindex(columns=[c for c in top6 if c in ct_imp.columns])
+    fig, ax = plt.subplots(figsize=(7.2, 2.7))
+    sns.heatmap(ct6, annot=True, fmt="d", cmap="Blues", cbar_kws={"label": "объектов"},
+                linewidths=0.5, linecolor="white", ax=ax)
+    ax.set_title("Тип влияния по округам"); ax.set_xlabel(""); ax.set_ylabel("")
+    plt.xticks(rotation=30, ha="right"); plt.tight_layout(); plt.show()
+
+    useful = explode_groups(df["useful_groups"])
+    risk = explode_groups(df["risk_groups"])
+    fig, axes = plt.subplots(1, 2, figsize=(7.6, 3.4))
+    u = useful.sort_values(); axes[0].barh(u.index, u.values, color=ACCENT)
+    axes[0].set_title("Полезные группы"); axes[0].grid(axis="y", visible=False)
+    r = risk.sort_values(); axes[1].barh(r.index, r.values, color=RISK)
+    axes[1].set_title("Группы риска"); axes[1].grid(axis="y", visible=False)
+    for a in axes:
+        for y, v in enumerate([p.get_width() for p in a.patches]):
+            a.text(v, y, f" {int(v)}", va="center", fontsize=7)
+    plt.tight_layout(); plt.show()
+```
+
+# Основные выводы
+
+1. **Масштаб и охват.** Данное представление (**`{python} DS_LABEL`**) охватывает
+   **`{python} fmt(n_obj)` объектов** в **`{python} f"{n_cat}"` категориях**
+   и **`{python} f"{n_type}"` типах**.
+2. **Уверенность в источниках низкая.** Лишь
+   **`{python} f"{n_multi/n_obj*100:.1f}"`%** объектов подтверждены несколькими
+   источниками; ~**`{python} f"{osm_only/n_obj*100:.0f}"`%** — только OSM —
+   количества являются нижними оценками.
+3. **Геометрия надёжна, атрибуты частичны.** Координаты и адреса заполнены почти
+   полностью; *дата открытия* непригодна для использования.
+4. **Таксономия 2022 года восстановлена.**
+   **`{python} f"{in_scheme/n_obj*100:.0f}"`%** объектов перекодируются в схему
+   здоровья 2022 года, что обеспечивает сопоставимое сравнение этапов через
+   `category_2022`.
+5. **Привязка к округам нарушена.** ~**`{python} f"{okt_share:.0f}"`%** объектов
+   попадают в один округ — исправить до выводов на уровне округов.
+6. **Соотношение «здоровье/риск» измеримо** по округам, что даёт следующему
+   этапу конкретный индикатор для картирования по городу.
+
+## Рекомендуемые следующие шаги
+
+- Перепроверить шаг привязки объектов к округам в выгрузке (наивысший приоритет).
+- Проверить и зафиксировать правила перекодировки `category_2022` относительно
+  определений категорий 2022 года.
+- Усилить уверенность в источниках дополнительными провайдерами (Яндекс, 2GIS,
+  административные данные), как в методологии 2022 года.
+- После исправления округов рассчитать доступность на душу населения по округам
+  и соотношение «здоровье/риск» как ключевой результат проекта.
+
+---
+
+# Приложение: словарь данных {.appendix}
+
+| Колонка | Значение |
+| --- | --- |
+| `verification_status` | Уровень подтверждения источниками (`only_osm`, `only_2gis`, `confirmed_by_2gis_and_osm`) |
+| `providers` / `provider_count` | Какие источники нашли объект / сколько их |
+| `category_orig` / `type_orig` | Категория и детальный тип |
+| `category_2022` | **Производная** — объект, перекодированный в таксономию здоровья 2022 года |
+| `name_orig` | Название объекта |
+| `city_orig` / `district_orig` / `adress_orig` | Текстовые поля местоположения |
+| `latitude` / `longitude` | Координаты (WGS84) |
+| `website_orig` / `phone_orig` / `opening_hours_orig` / `opening_date_orig` | Контакты и режим работы |
+| `impact` / `useful_groups` / `risk_groups` | Собственная классификация здоровья (только health-выгрузка) |
+
+# Дополнение: полная таблица перекодировки в таксономию 2022 года {.appendix}
+
+В таблице ниже перечислены **все сочетания исходной категории, исходного типа и
+назначенного класса 2022 года**, встречающиеся в данном наборе, с числом
+объектов — включая все метки, отнесённые к категории *прочее (вне схемы 2022)*.
+Поскольку правила перекодировки учитывают и названия объектов (`name_orig`),
+одна пара «категория/тип» может распределяться по нескольким классам 2022 года
+(например, табачная точка с типом «магазин»); каждое такое расщепление — отдельная
+строка. «—» означает объекты без указанного типа.
+
+```{python}
+# | label: tbl-recode-map
+# | tbl-cap: "Полная таблица перекодировки: исходная категория + исходный тип → класс 2022 года, с числом объектов (все сочетания, включая «прочее»)."
+sup = (df.assign(type_orig=df["type_orig"].fillna("—"),
+                 category_orig=df["category_orig"].fillna("—"))
+         .groupby(["category_2022", "category_orig", "type_orig"], observed=True)
+         .size().rename("Объектов").reset_index())
+sup["category_2022"] = pd.Categorical(sup["category_2022"], ORDER_2022, ordered=True)
+sup = sup.sort_values(["category_2022", "Объектов", "type_orig"],
+                      ascending=[True, False, True])
+sup = sup.rename(columns={"category_2022": "Класс 2022",
+                          "category_orig": "Исходная категория",
+                          "type_orig": "Исходный тип"})
+Markdown(sup.to_markdown(index=False))
+```

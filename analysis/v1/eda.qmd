@@ -1,0 +1,665 @@
+---
+title: "Urban Infrastructure of Arkhangelsk — Exploratory Data Analysis"
+subtitle: "InfrastructureRF export, 2026-06-28"
+author: "Northern State Medical University — Infrastructure project"
+date: today
+lang: en
+format:
+  pdf:
+    pdf-engine: xelatex
+    mainfont: "Arial"
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    fig-width: 7.2
+    fig-height: 4.4
+    fig-align: center
+    fig-pos: "H"
+    geometry:
+      - margin=2.2cm
+    colorlinks: true
+execute:
+  echo: false
+  warning: false
+  message: false
+jupyter: python3
+---
+
+```{python}
+# | tags: [parameters]
+# Which dataset to analyse: "enriched" (full city export) or "health"
+# (the health-and-risk filtered subset). Override with:
+#   pixi run eda-health
+dataset = "enriched"
+```
+
+```{python}
+# | label: setup
+import sys
+from pathlib import Path
+import numpy as np
+import pandas as pd
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+mpl.rcParams.update({
+    "font.family": "DejaVu Sans",   # full Cyrillic coverage for figure labels
+    "figure.dpi": 150,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "axes.grid": True,
+    "grid.alpha": 0.25,
+    "axes.titlesize": 12,
+    "axes.titleweight": "bold",
+})
+sns.set_palette("colorblind")
+
+ACCENT = "#2b6cb0"   # health-supporting / neutral primary
+RISK = "#c05621"     # risk factors
+MIXED = "#6b7280"
+
+# Locate the repository root, so this report may live at any depth under it.
+_root = next(p for p in [Path.cwd(), *Path.cwd().parents]
+             if (p / "pixi.toml").exists())
+sys.path.insert(0, str(_root / "src"))
+from arkhinfra import paths as P  # noqa: E402
+
+RAW = P.RAW
+
+CATEGORY_EN = {
+    "Магазины": "Shops", "Организации": "Organizations",
+    "Медицинские организации": "Medical organizations", "Услуги": "Services",
+    "Общепит": "Catering", "Образование": "Education",
+    "Спортивные объекты": "Sport facilities",
+    "Государственные организации": "Government organizations",
+    "фастфуд": "Fast food", "Финансовые организации": "Financial organizations",
+    "Почта и связь": "Post & communications", "Авто": "Auto", "Культура": "Culture",
+    "Досуг и спорт": "Leisure & sport", "Точки продажи табака": "Tobacco outlets",
+    "Гостиницы и туризм": "Hotels & tourism",
+}
+DISTRICT_EN = {
+    "Октябрьский округ": "Oktyabrsky", "Округ Майская горка": "Mayskaya Gorka",
+    "Соломбальский округ": "Solombalsky", "Округ Варавино-Фактория": "Varavino-Faktoriya",
+    "Северный округ": "Severny", "Исакогорский и Цигломенский округа": "Isakogorsky & Tsiglomensky",
+    "Ломоносовский округ": "Lomonosovsky", "Маймаксанский округ": "Maymaksansky",
+}
+VERIF_EN = {
+    "only_osm": "OSM only", "only_2gis": "2GIS only",
+    "confirmed_by_2gis_and_osm": "OSM + 2GIS (confirmed)",
+}
+
+# Rename map from the (Russian) health-export columns to the canonical schema.
+HEALTH_RENAME = {
+    "Статус проверки": "verification_status", "Источники": "providers",
+    "Количество источников": "provider_count", "Категория": "category_orig",
+    "Тип": "type_orig", "Организация": "name_orig", "Город": "city_orig",
+    "Округ/район": "district_orig", "Адрес": "adress_orig", "Широта": "latitude",
+    "Долгота": "longitude", "Сайт": "website_orig", "Телефон": "phone_orig",
+    "Часы работы": "opening_hours_orig", "Дата открытия": "opening_date_orig",
+    "Тип влияния": "impact", "Полезные группы": "useful_groups",
+    "Группы риска": "risk_groups",
+}
+
+
+def load_dataset(which):
+    """Return (df, meta) in the canonical schema for either dataset."""
+    if which == "health":
+        df = pd.read_excel(RAW / "objects_arkhangelsk_2026-06-28_health.xlsx",
+                           sheet_name="Объекты").rename(columns=HEALTH_RENAME)
+        meta = {"label": "Health & risk subset", "has_impact": True}
+    else:
+        df = pd.read_csv(RAW / "objects_arkhangelsk_2026-06-28_enriched.csv",
+                         sep=";", encoding="utf-8-sig", low_memory=False)
+        meta = {"label": "Full enriched export", "has_impact": False}
+    for col in ("latitude", "longitude"):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["provider_count"] = pd.to_numeric(df["provider_count"], errors="coerce")
+    df["category_en"] = df["category_orig"].map(CATEGORY_EN).fillna(df["category_orig"])
+    df["district_en"] = df["district_orig"].map(DISTRICT_EN).fillna(df["district_orig"])
+    df["verif_en"] = df["verification_status"].map(VERIF_EN).fillna(df["verification_status"])
+    return df, meta
+
+
+# ---- Recoding of any object into the 2022 health taxonomy (7 classes) -----
+CLASS_2022 = ["Medical", "Sport", "Grocery shops", "Catering",
+              "Alcohol shops", "Tobacco outlets", "Industrial"]
+ORDER_2022 = CLASS_2022 + ["Other (outside 2022 scheme)"]
+# labels used in the 2022 source file -> canonical English class
+SRC2022_EN = {
+    "Медицинские организации": "Medical", "Спортивные объекты": "Sport",
+    "Магазины": "Grocery shops", "Общепит": "Catering",
+    "Спецмагазины алкоголя": "Alcohol shops", "Точки продажи табака": "Tobacco outlets",
+    "Пром. Объекты": "Industrial",
+}
+GROCERY_TYPES = {
+    "продуктовый магазин", "супермаркет", "гипермаркет", "овощи и фрукты",
+    "фрукты-овощи", "булочная", "кулинария", "ярмарка", "рынок",
+    "магазин: confectionery", "кондитерская", "мясной магазин",
+    "рыбный магазин", "молочный магазин", "магазин у дома",
+}
+
+
+def _has(s, *words):
+    m = np.zeros(len(s), dtype=bool)
+    for w in words:
+        m |= s.str.contains(w, regex=False, na=False)
+    return m
+
+
+def recode_2022(df):
+    """Map objects onto the 2022 taxonomy using category + type + name."""
+    cat = df["category_orig"].fillna("").astype(str)
+    t = df["type_orig"].fillna("").astype(str).str.lower()
+    blob = (cat.str.lower() + " | " + t + " | "
+            + df["name_orig"].fillna("").astype(str).str.lower())
+
+    tobacco = (cat == "Точки продажи табака") | _has(blob, "табак", "вейп", "сигарет", "кальян", "vape")
+    alcohol = _has(t, "алкогол") | _has(blob, "алкомаркет", "винотек") | (_has(t, "винный") & _has(t, "магазин"))
+    medical = (cat == "Медицинские организации") | _has(
+        blob, "аптек", "поликлин", "больниц", "стоматолог", "клиник", "врач",
+        "диагност", "лаборатор", "диспансер", "госпит", "медиц", "оптика",
+        "реабилит", "санатор", "профилакт", "роддом", "родильн", "фельдшер")
+    sport = (cat == "Спортивные объекты") | _has(
+        blob, "спорт", "фитнес", "бассейн", "стадион", "тренаж", "воркаут",
+        "каток", "манеж", "йога") | _has(t, "парк", "сквер", "набережн")
+    catering = cat.isin(["Общепит", "фастфуд"]) | _has(
+        t, "кафе", "фастфуд", "бар", "ресторан", "паб", "кофейн", "столов",
+        "закусочн", "пиццери", "суши", "бистро")
+    grocery = t.isin(GROCERY_TYPES)
+    industrial = _has(blob, "завод", "энергокомплекс", "тэц", "гэс", "фабрика", "промышл", "комбинат")
+
+    return pd.Series(np.select(
+        [tobacco, alcohol, medical, sport, catering, grocery, industrial],
+        ["Tobacco outlets", "Alcohol shops", "Medical", "Sport", "Catering",
+         "Grocery shops", "Industrial"],
+        default="Other (outside 2022 scheme)"), index=df.index)
+
+
+def barh(series, title, xlabel, color=ACCENT, fmt_pct=False, figsize=(7.2, 4.4)):
+    s = series.sort_values(ascending=True)
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.barh(s.index, s.values, color=color)
+    total = s.sum()
+    for y, v in enumerate(s.values):
+        lbl = f"{v:,} ({v/total*100:.0f}%)" if fmt_pct else f"{v:,}"
+        ax.text(v, y, " " + lbl, va="center", ha="left", fontsize=8)
+    ax.set_xlabel(xlabel); ax.set_title(title)
+    ax.margins(x=0.16); ax.grid(axis="y", visible=False)
+    plt.tight_layout(); plt.show()
+
+
+df, meta = load_dataset(dataset)
+df["category_2022"] = recode_2022(df)
+
+n_obj = len(df)
+n_cat = df["category_orig"].nunique()
+n_type = df["type_orig"].nunique()
+n_dist = df["district_orig"].nunique()
+DS_LABEL = meta["label"]
+```
+
+# Introduction
+
+This report is the **initial exploratory data analysis (EDA)** of the current
+stage of the Northern State Medical University infrastructure project. The
+research question — inherited from the 2022 stage (see
+[`docs/report_arkhangelsk_2022.md`](../../docs/report_arkhangelsk_2022.md)) — is
+**how health-relevant urban infrastructure and health risk factors are
+distributed across the districts (*okrugs*) of Arkhangelsk**.
+
+The data is produced by the *ИнфраструктураРФ* program (see
+[`docs/infrastructure_rf.md`](../../docs/infrastructure_rf.md)) for Arkhangelsk,
+dated **2026-06-28**. This report is parameterised and can be rendered for either
+the full city export or the health-and-risk subset.
+
+::: {.callout-note}
+## Dataset analysed: **`{python} DS_LABEL`** — `{python} f"{n_obj:,}"` objects
+`enriched` = full city inventory · `health` = objects pre-filtered to
+health-supporting infrastructure and risk factors. Render the other view with
+`pixi run eda-health`.
+:::
+
+```{python}
+# | label: overview-table
+overview = pd.DataFrame({
+    "Metric": ["Objects (rows)", "Categories", "Object types", "Districts (okrugs)",
+               "City", "Coordinate coverage", "Address coverage"],
+    "Value": [f"{n_obj:,}", f"{n_cat}", f"{n_type}", f"{n_dist}", "Arkhangelsk",
+              f"{df['latitude'].notna().mean()*100:.0f}%",
+              f"{df['adress_orig'].notna().mean()*100:.1f}%"],
+})
+overview.style.hide(axis="index")
+```
+
+# Data quality and source verification
+
+Every object carries provenance and verification metadata; confidence is higher
+when an object is confirmed by more than one source.
+
+```{python}
+# | label: fig-verification
+# | fig-cap: "Objects by verification status (data-source confidence)."
+vc = df["verif_en"].value_counts()
+barh(vc, "Verification status", "Number of objects", fmt_pct=True, figsize=(7.2, 2.9))
+```
+
+```{python}
+# | label: verif-note
+n_multi = int((df["provider_count"] >= 2).sum())
+osm_only = int((df["verification_status"] == "only_osm").sum())
+```
+
+Only **`{python} f"{n_multi:,}"`** objects
+(`{python} f"{n_multi/n_obj*100:.1f}"`%) are confirmed by both OpenStreetMap and
+2GIS; the rest come from a single source, and
+**`{python} f"{osm_only/n_obj*100:.0f}"`%** rely on OpenStreetMap alone. Absolute
+counts are therefore **lower bounds**, consistent with the 2022 finding that
+~64% of objects were found in OSM.
+
+## Field completeness
+
+```{python}
+# | label: fig-completeness
+# | fig-cap: "Share of objects with each attribute populated."
+fields = {"Address": "adress_orig", "Opening hours": "opening_hours_orig",
+          "Phone": "phone_orig", "Website": "website_orig", "Opening date": "opening_date_orig"}
+cov = pd.Series({k: df[v].notna().mean() * 100 for k, v in fields.items()}).sort_values()
+fig, ax = plt.subplots(figsize=(7.2, 3.0))
+ax.barh(cov.index, cov.values, color=ACCENT)
+for y, v in enumerate(cov.values):
+    ax.text(v, y, f" {v:.0f}%", va="center", fontsize=8)
+ax.set_xlim(0, 100); ax.set_xlabel("% of objects populated")
+ax.set_title("Attribute completeness"); ax.grid(axis="y", visible=False)
+plt.tight_layout(); plt.show()
+```
+
+Coordinates and addresses are near-complete, so **spatial analysis is reliable**.
+Contact details are partial, and *opening date* is essentially absent and should
+be dropped from downstream analysis.
+
+# Category composition
+
+```{python}
+# | label: fig-categories
+# | fig-cap: "Objects by category (English labels; source categories are in Russian)."
+cat = df["category_en"].value_counts()
+h = max(3.2, 0.34 * len(cat) + 1.2)
+barh(cat, "Objects by category", "Number of objects", fmt_pct=True, figsize=(7.2, h))
+```
+
+## Most frequent object types
+
+```{python}
+# | label: fig-types
+# | fig-cap: "Top 20 object types (type_orig, original Russian labels)."
+typ = df["type_orig"].value_counts().head(20)
+barh(typ, "Top 20 object types", "Number of objects", figsize=(7.2, 5.6))
+```
+
+# Recoding to the 2022 taxonomy
+
+The 2022 stage used a focused **health-relevant taxonomy of 7 classes**: *Medical
+organizations*, *Sport facilities*, *Grocery shops*, *Catering*, *Alcohol shops*,
+*Tobacco outlets*, and *Industrial objects*. The current export uses a broader,
+generic category system in which, for example, `Магазины` ("Shops") mixes
+groceries with clothing, hardware, and alcohol.
+
+To make the two stages comparable, each current object is **recoded into the 2022
+taxonomy** (new column `category_2022`) using a transparent rule over
+`category_orig`, `type_orig`, and `name_orig` — e.g. pharmacies and clinics →
+*Medical*; `Алкогольный магазин` → *Alcohol shops*; hookah lounges → *Tobacco
+outlets* (as in 2022); grocery-type shops → *Grocery shops*. Objects that fall
+outside the health taxonomy (clothing, services, banks, …) are labelled *Other*.
+The complete category/type → class mapping, including everything assigned to
+*Other*, is listed in the supplementary table at the end of this report
+(@tbl-recode-map).
+
+```{python}
+# | label: fig-recode
+# | fig-cap: "Current objects recoded into the 2022 taxonomy."
+rc = df["category_2022"].value_counts().reindex(ORDER_2022).dropna()
+colors = [RISK if c in ("Alcohol shops", "Tobacco outlets") else
+          (MIXED if c.startswith("Other") else ACCENT) for c in rc.index]
+order = rc.sort_values()
+fig, ax = plt.subplots(figsize=(7.2, 4.2))
+ax.barh(order.index, order.values,
+        color=[RISK if c in ("Alcohol shops", "Tobacco outlets") else
+               (MIXED if c.startswith("Other") else ACCENT) for c in order.index])
+for y, v in enumerate(order.values):
+    ax.text(v, y, f" {v:,} ({v/n_obj*100:.0f}%)", va="center", fontsize=8)
+ax.set_xlabel("Number of objects"); ax.set_title("Recoded to 2022 taxonomy")
+ax.margins(x=0.16); ax.grid(axis="y", visible=False)
+plt.tight_layout(); plt.show()
+
+in_scheme = int((df["category_2022"] != "Other (outside 2022 scheme)").sum())
+```
+
+**`{python} f"{in_scheme:,}"`** objects
+(`{python} f"{in_scheme/n_obj*100:.0f}"`%) of the current dataset map into the
+2022 health taxonomy; the remainder are outside its scope.
+
+## Comparison with the 2022 classification
+
+```{python}
+# | label: tbl-compare
+# | tbl-cap: "Class distribution: 2022 stage vs. current dataset (share within the 7-class scheme)."
+d22 = pd.read_excel(RAW / "objects_3_districts_2022.xlsx")
+c22 = d22["category_orig"].map(SRC2022_EN).value_counts()
+cur = df.loc[df["category_2022"] != "Other (outside 2022 scheme)", "category_2022"].value_counts()
+
+cmp = pd.DataFrame(index=CLASS_2022)
+cmp["2022 N"] = c22.reindex(CLASS_2022).fillna(0).astype(int)
+cmp["2022 %"] = (cmp["2022 N"] / cmp["2022 N"].sum() * 100).round(1)
+cmp["Current N"] = cur.reindex(CLASS_2022).fillna(0).astype(int)
+cmp["Current %"] = (cmp["Current N"] / cmp["Current N"].sum() * 100).round(1)
+tot = pd.DataFrame({"2022 N": [cmp["2022 N"].sum()], "2022 %": [100.0],
+                    "Current N": [cmp["Current N"].sum()], "Current %": [100.0]},
+                   index=["Total (in scheme)"])
+cmp_disp = pd.concat([cmp, tot]).reset_index().rename(columns={"index": "2022 class"})
+(cmp_disp.style.hide(axis="index")
+ .format({"2022 %": "{:.1f}", "Current %": "{:.1f}"}))
+```
+
+The 2022 data covered only three okrugs (1,753 objects) whereas the current
+export is city-wide, so the comparison is most meaningful on **shares**. *Grocery
+shops*, *Medical*, and *Catering* dominate the health-relevant infrastructure in
+both stages; the recoding lets later stages track each class on a like-for-like
+basis.
+
+# Spatial and district distribution
+
+All objects are geocoded within the Arkhangelsk bounding box.
+
+```{python}
+# | label: fig-map
+# | fig-cap: "Spatial distribution of objects, coloured by district (okrug), on an OpenStreetMap/CARTO basemap."
+top_d = df["district_en"].value_counts().index.tolist()
+fig, ax = plt.subplots(figsize=(7.2, 6.0))
+for color, d in zip(sns.color_palette("colorblind", len(top_d)), top_d):
+    sub = df[df["district_en"] == d]
+    ax.scatter(sub["longitude"], sub["latitude"], s=6, alpha=0.5,
+               color=color, label=f"{d} ({len(sub):,})")
+ax.set_xlabel("Longitude"); ax.set_ylabel("Latitude"); ax.set_title("Objects by district")
+ax.set_aspect(1 / np.cos(np.deg2rad(64.55)))
+try:
+    # Real-map background. Tiles are cached in data/tile_cache, so only the
+    # first render needs internet access; offline we keep the plain scatter.
+    import contextily as ctx
+    tile_cache = RAW.parent / "tile_cache"
+    tile_cache.mkdir(exist_ok=True)
+    ctx.set_cache_dir(str(tile_cache))
+    ctx.add_basemap(ax, crs="EPSG:4326", source=ctx.providers.CartoDB.Positron,
+                    attribution_size=5)
+    ax.grid(visible=False)
+except Exception:
+    ax.grid(alpha=0.2)
+ax.legend(loc="upper left", fontsize=7, markerscale=2, framealpha=0.9)
+plt.tight_layout(); plt.show()
+```
+
+```{python}
+# | label: fig-districts
+# | fig-cap: "Objects per district (okrug)."
+dist = df["district_en"].value_counts()
+barh(dist, "Objects by district", "Number of objects", fmt_pct=True, figsize=(7.2, 3.8))
+okt_share = dist.iloc[0] / n_obj * 100
+```
+
+
+## Data-quality caveat: district assignment is skewed
+
+**`{python} f"{okt_share:.0f}"`% of all objects are assigned to a single okrug
+(Oktyabrsky).** This is inconsistent with the geography of Arkhangelsk and with
+the 2022 stage, where Oktyabrsky, Lomonosovsky, and Mayskaya Gorka held
+comparable counts. The most likely cause is the automatic okrug-assignment step
+of the export. **District-level rates below should be treated as provisional and
+the assignment logic re-validated before any substantive spatial conclusions.**
+
+
+
+# Frequency of 2022-taxonomy classes by okrug
+
+The core cross-tabulation for the project: **how the recoded health-relevant
+classes are distributed across okrugs.** The heatmap is annotated with object
+counts; totals are in the table below.
+
+```{python}
+# | label: fig-recode-heatmap
+# | fig-cap: "Frequency of recoded 2022-taxonomy classes by district (counts)."
+top_dists = df["district_en"].value_counts().index[:6]
+sub = df[df["category_2022"] != "Other (outside 2022 scheme)"]
+ct = pd.crosstab(sub["category_2022"], sub["district_en"])
+ct = ct.reindex(index=[c for c in CLASS_2022 if c in ct.index],
+                columns=[d for d in top_dists if d in ct.columns])
+fig, ax = plt.subplots(figsize=(7.4, 4.6))
+sns.heatmap(ct, annot=True, fmt="d", cmap="Blues", linewidths=0.5,
+            linecolor="white", cbar_kws={"label": "objects"}, ax=ax)
+ax.set_xlabel(""); ax.set_ylabel(""); ax.set_title("2022-class frequency by okrug")
+plt.xticks(rotation=30, ha="right"); plt.tight_layout(); plt.show()
+```
+
+```{python}
+# | label: tbl-recode-freq
+# | tbl-cap: "Frequency table of recoded 2022-taxonomy classes by district (with totals). \"Other\" = outside the 2022 scheme."
+from IPython.display import Markdown
+
+# Districts as rows and short class headers as columns, emitted as a markdown
+# pipe table (not Styler HTML) — a 10-district-column table overflows the page.
+SHORT_2022 = {"Grocery shops": "Grocery", "Alcohol shops": "Alcohol",
+              "Tobacco outlets": "Tobacco", "Other (outside 2022 scheme)": "Other"}
+full = pd.crosstab(df["district_en"], df["category_2022"], margins=True, margins_name="All")
+keep_cols = [c for c in CLASS_2022 if c in full.columns] + \
+            (["Other (outside 2022 scheme)"] if "Other (outside 2022 scheme)" in full.columns else []) + ["All"]
+keep_rows = list(df["district_en"].value_counts().index) + ["All"]
+full = full.reindex(index=keep_rows, columns=keep_cols).rename(columns=SHORT_2022)
+Markdown(full.reset_index().rename(columns={"district_en": "District"})
+         .to_markdown(index=False))
+```
+
+# Health infrastructure vs. risk factors
+
+```{python}
+# | label: healthrisk-compute
+t = df["type_orig"].fillna("").astype(str).str.lower()
+cat = df["category_orig"].fillna("").astype(str)
+blob = (cat.str.lower() + " | " + t + " | " + df["name_orig"].fillna("").str.lower())
+
+health_sub = {
+    "Medical": df["category_2022"].eq("Medical"),
+    "Sport & recreation": df["category_2022"].eq("Sport"),
+}
+risk_sub = {
+    "Fast food": cat.eq("фастфуд") | _has(t, "фастфуд"),
+    "Alcohol": df["category_2022"].eq("Alcohol shops"),
+    "Tobacco": df["category_2022"].eq("Tobacco outlets"),
+    "Bars / pubs": _has(t, "бар", "паб") & ~_has(t, "барбер"),
+    "Hookah / nightlife": _has(blob, "кальян", "ночной клуб", "лаунж"),
+}
+hr = pd.DataFrame({
+    "Group": ["Health-supporting"] * len(health_sub) + ["Risk factor"] * len(risk_sub),
+    "Subgroup": list(health_sub) + list(risk_sub),
+    "Objects": [int(m.sum()) for m in health_sub.values()] + [int(m.sum()) for m in risk_sub.values()],
+})
+health_mask = np.logical_or.reduce(list(health_sub.values()))
+risk_mask = np.logical_or.reduce(list(risk_sub.values()))
+n_health, n_risk = int(health_mask.sum()), int(risk_mask.sum())
+```
+
+A transparent heuristic (built on the 2022 recoding plus type keywords) separates
+**health-supporting** infrastructure from **risk factors**. Under it the dataset
+holds **`{python} f"{n_health:,}"`** health-supporting and
+**`{python} f"{n_risk:,}"`** risk-factor objects.
+
+```{python}
+# | label: fig-healthrisk
+# | fig-cap: "Health-supporting infrastructure (blue) vs. risk factors (orange)."
+order = hr.sort_values("Objects")
+fig, ax = plt.subplots(figsize=(7.2, 3.8))
+ax.barh(order["Subgroup"], order["Objects"],
+        color=[ACCENT if g == "Health-supporting" else RISK for g in order["Group"]])
+for y, v in enumerate(order["Objects"]):
+    ax.text(v, y, f" {v:,}", va="center", fontsize=8)
+ax.set_xlabel("Number of objects")
+ax.set_title("Health-supporting (blue) vs. risk factors (orange)")
+ax.grid(axis="y", visible=False); ax.margins(x=0.12)
+plt.tight_layout(); plt.show()
+```
+
+```{python}
+# | label: tbl-healthrisk-district
+# | tbl-cap: "Health-supporting vs. risk objects by district (provisional — see okrug caveat)."
+tmp = df.copy()
+tmp["is_health"], tmp["is_risk"] = health_mask, risk_mask
+g = tmp.groupby("district_en").agg(Objects=("name_orig", "size"),
+                                   Health=("is_health", "sum"), Risk=("is_risk", "sum"))
+g["Health:Risk"] = (g["Health"] / g["Risk"].replace(0, np.nan)).round(2)
+g = g.sort_values("Objects", ascending=False)
+(g.reset_index().rename(columns={"district_en": "District"})
+ .style.hide(axis="index").format({"Health:Risk": "{:.2f}"}, na_rep="—"))
+```
+
+```{python}
+# | label: health-native
+# | output: asis
+if meta["has_impact"]:
+    print("## Native health classification (health export)\n")
+    print("The health export ships the program's own classification, which is "
+          "used here as the authoritative view.\n")
+```
+
+```{python}
+# | label: impact-block
+# | output: asis
+IMPACT_EN = {"Положительная инфраструктура": "Positive infrastructure",
+             "Фактор риска": "Risk factor", "Смешанное влияние": "Mixed"}
+USEFUL_EN = {
+    "Медицинские организации": "Medical organizations",
+    "Аптеки и медицинские товары": "Pharmacies & medical goods",
+    "Спортивные объекты": "Sport facilities",
+    "Зоны отдыха и прогулок": "Recreation & walking areas",
+    "Стоматология и диагностика": "Dentistry & diagnostics",
+    "Реабилитация и профилактика": "Rehab & prevention"}
+RISK_EN = {
+    "Продажа алкоголя": "Alcohol sales",
+    "Бары, пабы и ночной досуг": "Bars, pubs & nightlife",
+    "Фастфуд и высококалорийный общепит": "Fast food & high-calorie catering",
+    "Продажа табака и вейпов": "Tobacco & vape sales",
+    "Азартные игры и букмекерские точки": "Gambling & betting"}
+
+
+def explode_groups(series, mapping):
+    s = series.dropna().astype(str).str.split(";").explode().str.strip()
+    s = s[s != ""].map(lambda x: mapping.get(x, x))
+    return s.value_counts()
+
+
+if meta["has_impact"]:
+    imp = df["impact"].map(IMPACT_EN).fillna(df["impact"]).value_counts()
+    ct_imp = pd.crosstab(df["impact"].map(IMPACT_EN).fillna(df["impact"]),
+                         df["district_en"])
+    order_cols = df["district_en"].value_counts().index
+    ct_imp = ct_imp.reindex(columns=[c for c in order_cols if c in ct_imp.columns])
+
+    imp_ord = imp.sort_values()
+    fig, ax = plt.subplots(figsize=(7.2, 2.5))
+    ax.barh(imp_ord.index, imp_ord.values,
+            color=[RISK if "Risk" in i else (MIXED if "Mixed" in i else ACCENT) for i in imp_ord.index])
+    for y, v in enumerate(imp_ord.values):
+        ax.text(v, y, f" {v:,}", va="center", fontsize=8)
+    ax.set_title("Impact type"); ax.set_xlabel("Number of objects")
+    ax.grid(axis="y", visible=False); ax.margins(x=0.16)
+    plt.tight_layout(); plt.show()
+
+    top6 = df["district_en"].value_counts().index[:6]
+    ct6 = ct_imp.reindex(columns=[c for c in top6 if c in ct_imp.columns])
+    fig, ax = plt.subplots(figsize=(7.2, 2.7))
+    sns.heatmap(ct6, annot=True, fmt="d", cmap="Blues", cbar_kws={"label": "objects"},
+                linewidths=0.5, linecolor="white", ax=ax)
+    ax.set_title("Impact type by okrug"); ax.set_xlabel(""); ax.set_ylabel("")
+    plt.xticks(rotation=30, ha="right"); plt.tight_layout(); plt.show()
+
+    useful = explode_groups(df["useful_groups"], USEFUL_EN)
+    risk = explode_groups(df["risk_groups"], RISK_EN)
+    fig, axes = plt.subplots(1, 2, figsize=(7.6, 3.4))
+    u = useful.sort_values(); axes[0].barh(u.index, u.values, color=ACCENT)
+    axes[0].set_title("Useful groups"); axes[0].grid(axis="y", visible=False)
+    r = risk.sort_values(); axes[1].barh(r.index, r.values, color=RISK)
+    axes[1].set_title("Risk groups"); axes[1].grid(axis="y", visible=False)
+    for a in axes:
+        for y, v in enumerate([p.get_width() for p in a.patches]):
+            a.text(v, y, f" {int(v)}", va="center", fontsize=7)
+    plt.tight_layout(); plt.show()
+```
+
+# Key findings
+
+1. **Scale & scope.** This view (**`{python} DS_LABEL`**) covers
+   **`{python} f"{n_obj:,}"` objects** across **`{python} f"{n_cat}"` categories**
+   and **`{python} f"{n_type}"` types**.
+2. **Source confidence is thin.** Only
+   **`{python} f"{n_multi/n_obj*100:.1f}"`%** of objects are multi-source
+   confirmed; ~**`{python} f"{osm_only/n_obj*100:.0f}"`%** are OSM-only — counts
+   are lower bounds.
+3. **Geometry is solid, attributes partial.** Coordinates/addresses are
+   near-complete; *opening date* is unusable.
+4. **2022 taxonomy recovered.** **`{python} f"{in_scheme/n_obj*100:.0f}"`%** of
+   objects recode into the 2022 health scheme, enabling like-for-like comparison
+   across stages via `category_2022`.
+5. **District assignment is broken.** ~**`{python} f"{okt_share:.0f}"`%** of
+   objects fall into one okrug — fix before district-level conclusions.
+6. **Health vs. risk is measurable** per okrug (health-to-risk ratio), giving the
+   next stage a concrete indicator to map across the city.
+
+## Recommended next steps
+
+- Re-validate the okrug-assignment step of the export (highest priority).
+- Review and freeze the `category_2022` recoding rules against the 2022 category
+  definitions.
+- Enrich source confidence with additional providers (Yandex, 2GIS,
+  administrative data) as in the 2022 methodology.
+- Once districts are fixed, compute per-district, per-capita accessibility and
+  the health-to-risk ratio as the core project output.
+
+---
+
+# Appendix: dataset dictionary {.appendix}
+
+| Column | Meaning |
+| --- | --- |
+| `verification_status` | Source confirmation tier (`only_osm`, `only_2gis`, `confirmed_by_2gis_and_osm`) |
+| `providers` / `provider_count` | Which sources found the object / how many |
+| `category_orig` / `type_orig` | Category and fine-grained type (Russian) |
+| `category_2022` | **Derived** — object recoded into the 2022 health taxonomy |
+| `name_orig` | Object name |
+| `city_orig` / `district_orig` / `adress_orig` | Location text fields |
+| `latitude` / `longitude` | Coordinates (WGS84) |
+| `website_orig` / `phone_orig` / `opening_hours_orig` / `opening_date_orig` | Contact & schedule |
+| `impact` / `useful_groups` / `risk_groups` | Native health classification (health export only) |
+
+# Supplementary: full recoding map to the 2022 taxonomy {.appendix}
+
+The table below lists **every combination of source category, source type and
+assigned 2022 class** present in this dataset, with object counts — including
+all labels that ended up in *Other (outside 2022 scheme)*. Because the recoding
+rules also inspect object names (`name_orig`), a single category/type pair can
+split across several 2022 classes (e.g. a tobacco shop typed as a generic shop);
+each such split is a separate row. Source types are shown with their original
+Russian labels; "—" marks objects with no type recorded.
+
+```{python}
+# | label: tbl-recode-map
+# | tbl-cap: "Full recoding map: source category + source type → 2022 class, with object counts (all combinations, including Other)."
+sup = (df.assign(type_orig=df["type_orig"].fillna("—"),
+                 category_orig=df["category_orig"].fillna("—"))
+         .groupby(["category_2022", "category_orig", "type_orig"], observed=True)
+         .size().rename("Objects").reset_index())
+sup["category_2022"] = pd.Categorical(sup["category_2022"], ORDER_2022, ordered=True)
+sup = sup.sort_values(["category_2022", "Objects", "type_orig"],
+                      ascending=[True, False, True])
+sup["category_orig"] = sup["category_orig"].map(CATEGORY_EN).fillna(sup["category_orig"])
+sup = sup.rename(columns={"category_2022": "2022 class",
+                          "category_orig": "Source category",
+                          "type_orig": "Source type (Russian)"})
+Markdown(sup.to_markdown(index=False))
+```

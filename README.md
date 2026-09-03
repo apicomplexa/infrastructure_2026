@@ -14,21 +14,53 @@ presentations.
 
 ```
 ├── data/
-│   └── raw/                     # original source data (read-only)
-│       ├── objects_arkhangelsk_2026-06-28_enriched.csv   # main export, 7,228 objects
-│       ├── objects_arkhangelsk_2026-06-28_health.xlsx    # health/risk-filtered subset
-│       └── objects_3_districts_2022.xlsx                 # previous-stage result (3 okrugs)
+│   ├── raw/                     # first delivery, 2026-06-28 (read-only)
+│   │   ├── objects_arkhangelsk_2026-06-28_enriched.csv   # main export, 7,228 objects
+│   │   ├── objects_arkhangelsk_2026-06-28_health.xlsx    # health/risk-filtered subset
+│   │   └── objects_3_districts_2022.xlsx                 # previous-stage result (3 okrugs)
+│   └── raw_v2/                  # second delivery, 2026-08-24 (read-only)
+│       ├── сравнение_документов_2026-08-24_093901.xlsx   # 2022 <-> 2026 record comparison
+│       ├── итоги_сравнения_3_округа.csv                  # per-okrug summary of that comparison
+│       └── ARKTMED_Arkhangelsk_2021-2026_all_categories_20260824_082854.xlsx  # indicator panel
+│   └── raw_v3/                  # third delivery, 2026-08-31 (read-only)
+│       ├── infrastructure_архангельск_2026-08-31_quality_excel.csv  # city-wide export, 7,263 objects
+│       ├── export_base_688669_zal6mp.xlsx                # commercial directory dump, 10,557 records
+│       └── ARKTMED_Arkhangelsk_2021-2026_all_categories_20260831_172749.xlsx  # rebuilt indicator panel
 ├── docs/                        # English documentation extracted from the presentations
 │   ├── infrastructure_rf.md         # the ИнфраструктураРФ program (current stage)
-│   └── report_arkhangelsk_2022.md   # 2022 report summary (previous stage)
+│   ├── report_arkhangelsk_2022.md   # 2022 report summary (previous stage)
+│   └── crosswalk_2022.md            # 2026 -> 2022 taxonomy crosswalk and its defects
 ├── references/                  # original presentations (binary, source of docs/)
 │   ├── infrastructure_rf.pptx
 │   └── report_arkhangelsk_2022.pptx
-├── analysis/
-│   ├── eda.qmd                  # Quarto exploratory data analysis
-│   └── eda.pdf                  # rendered report (deliverable)
-├── scripts/
-│   └── profile_data.py          # quick dataset profile
+├── analysis/                    # report sources only — one directory per delivery
+│   ├── v1/                      # first delivery (data/raw)
+│   │   ├── eda.qmd              # Quarto EDA (parameterised: enriched | health)
+│   │   └── eda-ru.qmd           # Russian version of the EDA (identical structure)
+│   ├── v2/                      # second delivery (data/raw_v2) — withdrawn by v3
+│   │   └── eda-v2.qmd
+│   └── v3/                      # third delivery (data/raw_v3); *-ru.qmd are the
+│       ├── eda-v3.qmd           #   Russian twins — prose only, tables stay English
+│       ├── eda-v3-ru.qmd
+│       ├── eda-v3-validation.qmd    # independent re-check against the 2022 benchmark
+│       ├── eda-v3-validation-ru.qmd
+│       ├── eda-v3-basecheck.qmd     # commercial directory profiled + re-matched
+│       └── eda-v3-basecheck-ru.qmd
+├── reports/                     # rendered PDFs — git-ignored, rebuilt by pixi tasks
+│   ├── v1/                      # eda.pdf, eda-health.pdf + their -ru twins
+│   ├── v2/                      # eda-v2.pdf
+│   └── v3/                      # eda-v3.pdf, -validation.pdf, -basecheck.pdf + twins
+├── src/arkhinfra/               # importable library, shared by reports and scripts
+│   ├── paths.py                 # every path in the repo, resolved from its root
+│   ├── v3_common.py             # shared loaders / recoding for the v3 reports
+│   ├── match_2022.py            # independent 2022 <-> 2026 record matcher
+│   └── basecheck.py             # export_base matcher (stricter normalisers)
+├── scripts/                     # runnable entry points
+│   ├── profile_data.py          # quick dataset profile
+│   ├── match_2022.py            # CLI launcher for arkhinfra.match_2022
+│   ├── build_ru_v3.py           # regenerate the Russian twin of eda-v3.qmd
+│   ├── build_ru_basecheck.py    # regenerate the Russian twin of the basecheck report
+│   └── ru_numfmt.py             # Russian number conventions in the twins
 ├── pixi.toml                    # environment & tasks (pixi / conda-forge)
 └── pixi.lock
 ```
@@ -45,6 +77,81 @@ Files were renamed to short ASCII names for reliable tooling. Original names:
 | `references/report_arkhangelsk_2022.pptx` | `220524_Доклад_Отчет_Инфраструктура_Архангельск_final.pptx` |
 | `references/infrastructure_rf.pptx` | `ИнфраструктураРФ.pptx` |
 
+Files in `data/raw_v2/` keep their original (Russian) names, since two of the
+three are referenced by name inside the delivery itself.
+
+## Second delivery — `data/raw_v2/` (2026-08-24)
+
+The second delivery is **not a refresh of the first**. It contains three
+different artefacts, analysed in [`reports/v2/eda-v2.pdf`](reports/v2/eda-v2.pdf).
+
+### 1. `сравнение_документов_2026-08-24_093901.xlsx` — record comparison
+
+A record-level comparison of the **2022 stage document** (2,293 rows) against a
+**new 2026 export restricted to the three okrugs the 2022 study covered**
+(5,257 rows). Seven sheets:
+
+| Sheet | Rows | Content |
+| --- | --- | --- |
+| `Сводка` | 15 | Run parameters and headline counts |
+| `Документ 1 с результатом` | 2,293 | The 2022 document with match status, found counterpart and GPS corrections appended |
+| `Совпадения` | 1,168 | Firm matches, both documents' columns side by side |
+| `Вероятные совпадения` | 995 | Probable matches requiring manual review |
+| `Только в документе 1` | 130 | 2022 objects not re-found in 2026 |
+| `Только в документе 2` | 3,663 | 2026 objects absent from the 2022 document |
+| `GPS-предупреждения` | 2 | Coordinate outliers detected |
+
+Matching used a **60 m distance tolerance** and a **0.86 name-similarity
+threshold**, with probable-match and GPS-correction modes enabled.
+
+**The new 2026 export is not shipped as a sheet of its own**, but every one of
+its 5,257 rows appears exactly once across `Совпадения`, `Вероятные совпадения`
+and `Только в документе 2`, always carrying the full `Документ 2: *` column
+block. Concatenating those blocks and de-duplicating on `Строка в документе 2`
+reconstructs the export verbatim — this is how `analysis/v2/eda-v2.qmd` recovers
+it. Its columns map onto the canonical schema of the first export
+(`Категория` → `category_orig`, `Организация` → `name_orig`, …); see Appendix A
+of the report for the full dictionary.
+
+The 2022 document used here (2,293 rows) is a **larger, GPS-annotated variant**
+of `data/raw/objects_3_districts_2022.xlsx` (1,753 rows). The difference is
+concentrated in the risk classes — 483 tobacco outlets here against 46 in the
+repository copy.
+
+### 2. `итоги_сравнения_3_округа.csv` — comparison summary
+
+Semicolon-delimited, UTF-8 with BOM, 4 rows (three okrugs + total). Columns:
+`Округ`, `Строк в исходном документе`, `Совпадений`, `Вероятных совпадений`,
+`Не найдено`, `Найдено всего`, `Доля найденных, %`. Headline: 94.3% of 2022
+rows re-found overall, ranging from 89.5% (Mayskaya Gorka) to 95.7%
+(Oktyabrsky).
+
+### 3. `ARKTMED_Arkhangelsk_2021-2026_all_categories_...xlsx` — indicator panel
+
+A **municipal indicator panel** for Arkhangelsk: 28 indicators × 6 years
+(2021–2026) = 168 observations, in 7 sections (Демография, Здоровье, Медицина,
+Экономика, Экология, Климат, Инфраструктура), plus a composite risk index with
+five components. Sheets: `Описание`, `Показатели`, `Индекс риска`, `Сводка`,
+`Карточки`. It carries **no object-level or okrug-level detail** — it describes
+the city as a whole, and is unrelated to the object export.
+
+> **Caveat — this panel is modelled, not observed.** 27 of the 28 indicators are
+> *exactly* linear in time (second difference zero to floating-point precision),
+> two of the six years lie in the future relative to the file's own date,
+> population age bands carry fractional people, and sources are cited at domain
+> level only. Every row is nevertheless stamped `Качество, % = 100`, which
+> describes completeness of the generated table, not fidelity to a source. Treat
+> the panel as a **schema**, not as data; re-source each series before citing it.
+
+## Obtaining the data
+
+`data/raw/` (first delivery) is in the repository. **`data/raw_v2/` and
+`data/raw_v3/` are not** — 8.6 MB of vendor spreadsheets, kept out of git for
+bulk. Copy them from the project archive into those two directories before
+rendering anything beyond the first-delivery reports; the file names the loaders
+expect are listed in the layout tree above and in `src/arkhinfra/paths.py`.
+Everything under `data/` is **read-only** — never modify a delivery in place.
+
 ## Getting started
 
 The project uses [pixi](https://pixi.sh) for dependency management (conda-forge).
@@ -52,8 +159,33 @@ The project uses [pixi](https://pixi.sh) for dependency management (conda-forge)
 ```bash
 pixi install            # create the environment from pixi.lock
 pixi run profile        # print a quick profile of the dataset
-pixi run eda            # render analysis/eda.qmd -> analysis/eda.pdf
+pixi run eda            # render the full enriched export  -> reports/v1/eda.pdf
+pixi run eda-health     # render the health & risk subset  -> reports/v1/eda-health.pdf
+pixi run eda-all        # render both reports
+pixi run eda-ru         # Russian report, enriched export  -> reports/v1/eda-ru.pdf
+pixi run eda-health-ru  # Russian report, health subset    -> reports/v1/eda-health-ru.pdf
+pixi run eda-all-ru     # render both Russian reports
+pixi run eda-v2         # render the second-delivery report -> reports/v2/eda-v2.pdf
+pixi run eda-v3         # render the third-delivery report  -> reports/v3/eda-v3.pdf
+pixi run eda-v3-val     # render the validation report      -> reports/v3/eda-v3-validation.pdf
+pixi run eda-v3-all     # render both third-delivery reports
+pixi run eda-v3-base    # commercial-directory source check -> reports/v3/eda-v3-basecheck.pdf
+pixi run match-2022     # run the independent 2022 <-> 2026 matcher -> data/processed/
+pixi run eda-v3-ru      # Russian third-delivery report -> reports/v3/eda-v3-ru.pdf
+pixi run eda-v3-val-ru  # Russian validation report     -> reports/v3/eda-v3-validation-ru.pdf
+pixi run eda-v3-all-ru  # render both Russian third-delivery reports
+pixi run eda-v3-base-ru # Russian source check -> reports/v3/eda-v3-basecheck-ru.pdf
+pixi run build-ru       # regenerate the Russian v3 twins from the English sources
 ```
+
+`reports/` is **git-ignored**: the PDFs are deliverables, rebuilt on demand from
+the sources, and keeping them out of history stops every re-render from adding
+several MB of undiffable binary to the repository.
+
+The EDA is **parameterised** (`dataset: enriched | health`) so the same document
+produces a report for either the full city export or the health-filtered subset;
+the health run additionally uses the export's native impact classification
+(`Тип влияния`, `Полезные группы`, `Группы риска`).
 
 The EDA renders to PDF via Quarto + XeLaTeX. A LaTeX distribution is required
 (this repo was built with MiKTeX on Windows); Cyrillic in figures is handled by
@@ -75,9 +207,9 @@ Semicolon-delimited, UTF-8 with BOM, 7,228 rows. Key columns:
 | `latitude` / `longitude` | Coordinates (WGS84) |
 | `website_orig` / `phone_orig` / `opening_hours_orig` / `opening_date_orig` | Contact & schedule |
 
-See `analysis/eda.qmd` for the full dictionary and analysis.
+See `analysis/v1/eda.qmd` for the full dictionary and analysis.
 
-## Key EDA findings (see `analysis/eda.pdf`)
+## Key findings — first delivery (see `reports/v1/eda.pdf`)
 
 - **7,228 objects**, 16 categories, 216 types — a general city inventory (retail
   dominates), much larger than the 2,528-object 2022 dataset.
@@ -87,5 +219,124 @@ See `analysis/eda.qmd` for the full dictionary and analysis.
   unusable (<1%).
 - **District assignment is broken:** ~71% of objects land in a single okrug
   (Oktyabrsky) — must be fixed before any district-level conclusions.
+  **Fixed in the second delivery** — see below.
 - A transparent heuristic already separates **health-supporting infrastructure
   from risk factors**, giving the next stage a concrete health-to-risk indicator.
+
+### Recoding to the 2022 taxonomy
+
+The 2022 stage used a focused 7-class health taxonomy (*Medical, Sport, Grocery
+shops, Catering, Alcohol shops, Tobacco outlets, Industrial*), while the current
+export uses a broader generic scheme (e.g. `Магазины` mixes groceries, clothing,
+and alcohol). The EDA adds a derived column **`category_2022`** that recodes each
+current object into the 2022 taxonomy (via `category_orig` + `type_orig` +
+`name_orig`), enabling a like-for-like comparison of the two stages and a
+frequency table / heatmap of the recoded classes by okrug. About **40%** of the
+full export (and **~85%** of the health subset) maps into the 2022 scheme.
+
+## Key findings — second delivery (see `reports/v2/eda-v2.pdf`)
+
+- **The okrug defect is fixed.** The new export splits the three okrugs
+  2,355 / 2,203 / 699 (Lomonosovsky / Oktyabrsky / Mayskaya Gorka) instead of the
+  first export's 33 / 5,104 / 915, and agrees with the 2022 stage on **100%** of
+  firmly matched records. District-level analysis is defensible again — for these
+  three okrugs; the other five remain unvalidated.
+- **Source diversity was lost in the process.** All 5,257 objects are OSM-only;
+  the 2GIS provider is absent, so nothing in this delivery is independently
+  corroborated.
+- **Continuity with 2022 is 51%, not 94%.** 94.3% of 2022 objects are re-found,
+  but 43.4% only as *probable* matches awaiting review. Probable matches are
+  usually the right building with an uncertain tenant, so they can be triaged by
+  name similarity.
+- **The 2022 risk taxonomy does not survive the new category scheme.** Only 78%
+  of matched objects keep their category; 483 tobacco outlets in 2022 correspond
+  to 22 so-labelled objects in the 2026 export, because the export classifies the
+  premises rather than the product sold there.
+- **Sport facilities are the real coverage gap** — 22% not found, and 46 of the
+  130 objects lost since 2022.
+- **The health-to-risk ratio is now computable per okrug** on trustworthy labels
+  — the first substantive project output this data supports.
+- **The ARKTMED indicator panel is synthetic** (27/28 series exactly linear) and
+  must be re-sourced before use.
+
+## Third delivery — `data/raw_v3/` (2026-08-31)
+
+The third delivery **replaces the second rather than extending it**: both
+artefacts `eda-v2.qmd` is built on are withdrawn. It is a fresh city-wide export
+plus two new files, analysed in two reports —
+[`reports/v3/eda-v3.pdf`](reports/v3/eda-v3.pdf) (descriptive) and
+[`reports/v3/eda-v3-validation.pdf`](reports/v3/eda-v3-validation.pdf) (independent
+re-check against the 2022 benchmark).
+
+| Artefact | 1st (`raw/`) | 2nd (`raw_v2/`) | 3rd (`raw_v3/`) |
+| --- | --- | --- | --- |
+| Main object export | 7,228 (city) | 5,257 (3 okrugs) | 7,263 (city) |
+| Record comparison vs 2022 | — | 2,293 × 5,257 | — (withdrawn) |
+| Per-okrug comparison summary | — | yes | — (withdrawn) |
+| Commercial directory dump | — | — | 10,557 records |
+| ARKTMED indicator panel | — | 28 ind. / 168 rows | 22 ind. / 65 rows |
+| 2GIS provider present | yes | no | yes |
+
+Files in `data/raw_v3/` keep their original names.
+
+## Key findings — third delivery
+
+- **The okrug defect is fixed city-wide**, not just for three okrugs. The largest
+  okrug now holds 35% of objects (was 71%), and Isakogorsky / Tsiglomensky —
+  merged into a single label in the first export — are separate.
+- **2GIS is back**, but corroboration is still thin: 172 objects (2.4%) are
+  confirmed by both providers and 6,504 (89.6%) rest on OSM alone. The export's
+  own `match_distance_meters` / `match_name_similarity` fields are a
+  *deduplication key, not independent verification* — 99.5% sit at exactly 0 m.
+- **The export is a fresh census, not a revision:** 81% of its content in the
+  three 2022 okrugs has no 2022 counterpart.
+- **The contractor's 94.3% match rate does not survive independent re-checking.**
+  Re-implementing the comparison from scratch gives a recall of **~64%**. Their
+  *confirmed match* tier is sound (median name similarity 1.00), but their
+  *probable match* tier is mostly coordinate proximity (median 0.51) — counting a
+  2022 object as found whenever any 2026 object sits nearby. Reproducing that
+  rule reproduces their number (95.1% vs their 94.3%, agreeing per okrug within
+  ~1 pp). The finding is robust to thresholds: the most permissive setting tested
+  (150 m, 0.75) still reaches only 70.9%.
+- **Risk classes are covered worst**, confirmed independently: recall is 34.8%
+  for tobacco outlets and 49.1% for alcohol shops, against 86.5% for medical
+  organisations.
+- **Most "missing" 2022 objects are tenant churn, not export failures.** Of 541
+  records with a nearby 2026 object but a different name, 388 share the address —
+  the same premises under a new occupant.
+- **The ARKTMED panel is no longer synthetic** (0 of 11 testable series exactly
+  linear, against 27 of 27 in the second delivery) and cites named Rosstat files.
+  But every health-outcome indicator was removed, the risk-index sheet is empty,
+  and outside climate it is a two- to three-year snapshot.
+- **A recoding bug was found and fixed.** `recode_2022()` lowercased the type
+  field but tested it against a capitalised grocery list, so the **`Grocery
+  shops` class was empty in every previously delivered report** — 811 objects
+  here, 854 in the first export, and 392 of the 1,753 records in the 2022
+  benchmark (22%). The fix lives in `src/arkhinfra/v3_common.py`; `analysis/v1/eda.qmd`
+  and `analysis/v2/eda-v2.qmd` still carry the defect, so their `Other` counts are
+  inflated. See [`docs/crosswalk_2022.md`](docs/crosswalk_2022.md).
+- **The commercial dump cannot serve as a primary source:** its okrug field is
+  empty for all 10,557 records and its coordinates are rounded to ±55 m, coarser
+  than the 50 m matching radius. As a *corroborating* source it is better than
+  first reported — see below.
+- **The 3.6% corroboration figure in `reports/v3/eda-v3-validation.pdf` is wrong.** It is a
+  join artefact: `norm_address` strips the city with a word boundary that never
+  matches "Архангельск**ая** область", so the administrative prefix on 45.8% of
+  directory addresses survives normalisation; the join additionally used exact
+  name equality and blocked on the address alone. Re-matched on distance with
+  fuzzy names (≥ 0.90) the directory corroborates **≈ 32%** of the export — about
+  nine times the published rate. See
+  [`reports/v3/eda-v3-basecheck.pdf`](reports/v3/eda-v3-basecheck.pdf); the corrected
+  normalisers live in `src/arkhinfra/basecheck.py`, kept separate from
+  `src/arkhinfra/v3_common.py` so the earlier reports are unaffected.
+
+### Russian twins of the third-delivery reports
+
+`analysis/v3/` holds a Russian twin (`*-ru.qmd`) beside each of the three English
+v3 reports. **Only the narrative prose and the figure/table captions are
+translated** — every code cell is byte-identical to the English source, so the
+rendered tables, axis labels and legends stay in English and the two language
+versions are directly comparable figure by figure. `pixi run build-ru`
+regenerates the twins from the English sources and normalises their numbers to
+Russian convention; re-run it after editing an English report rather than
+patching a twin by hand.

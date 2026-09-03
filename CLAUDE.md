@@ -8,40 +8,227 @@ Data + exploratory analysis for a study of urban-infrastructure distribution in
 Arkhangelsk (health-supporting infrastructure vs. health risk factors). Not an
 application — a small analysis repo. Background is in `docs/` and `README.md`.
 
+## Layout
+
+Four top-level directories carry the work, split by *kind*, and the analysis and
+report trees are split again by *delivery*:
+
+- `analysis/v1|v2|v3/` — report **sources** only (`.qmd`). The Russian twin of a
+  report sits beside its English original as `*-ru.qmd`.
+- `reports/v1|v2|v3/` — rendered **PDFs**, written by the pixi tasks via
+  `--output-dir`. **Git-ignored**: they are deliverables, rebuilt on demand.
+  Never hand-edit anything here, and do not add them to the index.
+- `src/arkhinfra/` — the importable **library**: `paths.py`, `v3_common.py`,
+  `basecheck.py`, `match_2022.py`.
+- `scripts/` — **runnable** entry points only. `scripts/match_2022.py` is a thin
+  launcher around `arkhinfra.match_2022`, which is a library module because a
+  report imports it.
+
+Nothing knows how deeply it is nested. `arkhinfra.paths` finds the repository
+root by walking up for `pixi.toml` and defines every path from there; each report
+opens its setup cell with the same four-line bootstrap that puts `src/` on
+`sys.path`. **Keep that bootstrap byte-identical across reports** — it is what
+lets a report move between directories, and what lets the Russian twins share
+their code cells verbatim with the English sources. A report that needs a data
+file should take it from `arkhinfra.paths`, never build a `../..` path by hand.
+
 ## Environment & commands
 
 Dependencies are managed with **pixi** (conda-forge). There is no system Python —
 always run tools through pixi:
 
 - `pixi install` — create the env from `pixi.lock`
-- `pixi run eda` — render `analysis/eda.qmd` → `analysis/eda.pdf` (Quarto + XeLaTeX)
+- `pixi run eda` — render the enriched report → `reports/v1/eda.pdf` (Quarto + XeLaTeX)
+- `pixi run eda-health` — render the health-subset report → `reports/v1/eda-health.pdf`
+- `pixi run eda-all` — render both
+- `pixi run eda-ru` / `eda-health-ru` / `eda-all-ru` — same reports in Russian
+  (`analysis/v1/eda-ru.qmd` → `eda-ru.pdf` / `eda-health-ru.pdf`)
+- `pixi run eda-v2` — render the second-delivery report → `reports/v2/eda-v2.pdf`
+- `pixi run build-ru` — regenerate the Russian v3 twins from the English sources
+  and normalise their numbers (the `build_ru_*` → `ru_numfmt` sequence in one go)
 - `pixi run profile` — quick dataset profile
+
+The EDA is parameterised (`dataset: enriched | health`, a `parameters`-tagged
+cell) and needs **papermill** for `-P` injection. The health export has a
+different (Russian) column schema — the `load_dataset()` loader in
+`analysis/v1/eda.qmd` normalizes both to one canonical schema. `category_2022` is a derived column that
+recodes objects into the 2022 seven-class health taxonomy (see `recode_2022()`).
 - `pixi run python <script>` — run any Python in the env
 
 PDF rendering needs a system LaTeX install (built with MiKTeX on Windows).
 
 ## Data conventions
 
-- Source data lives in `data/raw/` and is **read-only** — never modify it in place;
+- Source data lives in `data/raw/` (first delivery, 2026-06-28) and `data/raw_v2/`
+  (second delivery, 2026-08-24) and is **read-only** — never modify it in place;
   write derived files elsewhere (e.g. a `data/processed/` you create).
+- Only `data/raw/` is in git. `data/raw_v2/` and `data/raw_v3/` are **git-ignored**
+  for bulk, so a fresh clone renders the first-delivery reports and nothing else
+  until those two directories are restored from the project archive. A missing
+  delivery surfaces as a `FileNotFoundError` from an `arkhinfra.paths` constant,
+  not as a bug in the report.
 - The main CSV is **semicolon-delimited, UTF-8 with BOM**. Read it as:
   `pd.read_csv(path, sep=";", encoding="utf-8-sig", low_memory=False)`.
 - Category/type/district values are in **Russian**. The Windows console mangles
   Cyrillic on stdout — write Cyrillic output to a UTF-8 file and read it back
   rather than trusting terminal echo.
-- Deliverable reports are in **English**; map Russian category/district names to
-  English for report labels (see the dicts in `analysis/eda.qmd`).
+- Deliverable reports come in **English and Russian** (`analysis/v1/eda.qmd` /
+  `analysis/v1/eda-ru.qmd` — parallel documents, keep them in sync). The English one
+  maps Russian category/district names via the dicts in `eda.qmd`.
 
 ## Analysis / plotting notes
 
 - Charts embed in the PDF as images, so keep Cyrillic figure labels in a font
   with Cyrillic coverage — **DejaVu Sans** (matplotlib default) works.
 - Body text and LaTeX tables use the `Arial` main font (set in the qmd front
-  matter) for Cyrillic; the large title font is serif and lacks Cyrillic, so
-  keep the `title`/`subtitle` ASCII-only.
+  matter) for Cyrillic. Titles/headings use the **sans** font (KOMA class), which
+  by default lacks Cyrillic — for Cyrillic titles also set `sansfont: "Arial"`
+  (done in `eda-ru.qmd`); with the default sans, keep `title`/`subtitle`
+  ASCII-only.
+- Figures are pinned with `fig-pos: "H"`: floating figures corrupt `longtable`
+  page-breaking (rows silently clipped past the page bottom).
+- Wide tables (many columns) must be emitted as **markdown** (`to_markdown()`,
+  needs `tabulate`) — a pandas `Styler` becomes a fixed-width LaTeX table whose
+  header row overflows the page. Keep ≤ ~10 short-headed columns; put long names
+  (districts) in rows, not column headers.
+- The district map draws a **contextily** basemap (CartoDB Positron,
+  `crs="EPSG:4326"`). Tiles cache to `data/tile_cache/` (gitignored), so the
+  first render needs internet; offline the code falls back to a plain scatter.
 
-## Known data caveat
+## Second delivery (`data/raw_v2/`)
 
-District (`district_orig`) assignment in the 2026 export is skewed — ~71% of
-objects fall into one okrug (Oktyabrsky). Treat district-level results as
-provisional until the export's okrug-assignment step is re-validated.
+Three artefacts, all analysed by `analysis/v2/eda-v2.qmd` (English only — there is
+deliberately no Russian twin for this report):
+
+- `сравнение_документов_*.xlsx` — record comparison of the 2022 document (2,293
+  rows) against a new 2026 export limited to the three 2022 okrugs (5,257 rows).
+  **The 2026 export is not a sheet of its own**: rebuild it by concatenating the
+  `Документ 2: *` column block from `Совпадения` + `Вероятные совпадения` +
+  `Только в документе 2` and de-duplicating on `Строка в документе 2`.
+- `итоги_сравнения_3_округа.csv` — per-okrug summary. **Semicolon-delimited**,
+  UTF-8 with BOM, like the main CSV.
+- `ARKTMED_*.xlsx` — municipal indicator panel, 28 indicators × 6 years. City
+  level only, no okrug detail.
+
+`eda-v2.qmd` reuses `recode_2022()` verbatim from `eda.qmd` — **keep the two
+copies in sync** so the reports stay comparable.
+
+Cyrillic in inline code/verbatim needs `monofont: "Consolas"` in the front
+matter; without it the default mono font silently drops Cyrillic glyphs.
+Pandoc pipe tables cannot hold line breaks (`
+ewline` and `<br>` are both
+dropped on the way to LaTeX) — use a list instead.
+
+## Third delivery (`data/raw_v3/`, 2026-08-31)
+
+**Replaces the second delivery rather than extending it** — both artefacts
+`eda-v2.qmd` is built on (the comparison workbook and the per-okrug summary) are
+withdrawn. Three files, analysed by two English-only reports:
+
+- `infrastructure_архангельск_*_quality_excel.csv` — the city-wide export, 7,263
+  objects × 22 columns. Same schema as `raw/…enriched.csv` minus
+  `enrichment_comment`. Semicolon-delimited, UTF-8 with BOM.
+- `export_base_*.xlsx` — commercial directory dump, 10,557 records × 25 fields in
+  a **third taxonomy** (`Рубрика`/`Подрубрика`/`Тип подрубрики`). See the loader
+  caveats below.
+- `ARKTMED_*.xlsx` — rebuilt indicator panel, 22 indicators / 65 rows.
+
+Reports and helpers:
+
+- `analysis/v3/eda-v3.qmd` → `reports/v3/eda-v3.pdf` (`pixi run eda-v3`) — descriptive EDA:
+  provenance, raw groups, 2022 recoding, maps, the commercial dump, ARKTMED.
+- `analysis/v3/eda-v3-validation.qmd` → `reports/v3/eda-v3-validation.pdf`
+  (`pixi run eda-v3-val`) — independent re-check against the 2022 benchmark.
+- `src/arkhinfra/v3_common.py` — **shared** loaders, normalisers and `recode_2022()`
+  for both reports. Import it rather than copying code.
+- `src/arkhinfra/match_2022.py` (`pixi run match-2022`, via the
+  `scripts/match_2022.py` launcher) — the independent matcher; writes to
+  `data/processed/`. `eda-v3-validation.qmd` imports it, so edits to it change
+  that report as well as the CLI output.
+- `docs/crosswalk_2022.md` — the 2026 → 2022 taxonomy crosswalk and its defects.
+- `analysis/v3/eda-v3-basecheck.qmd` → `reports/v3/eda-v3-basecheck.pdf` (`pixi run eda-v3-base`)
+  — the commercial directory profiled and re-matched. It exists because
+  `eda-v3-validation.qmd` reports the directory corroborating only **3.6 %** of
+  the export, which is a **join artefact**: `v3_common.norm_address` strips the
+  city with `\bархангельск\b`, whose word boundary never matches "Архангельск**ая** область",
+  so the administrative prefix on 45.8 % of directory addresses survives
+  normalisation; on top of that the join used exact name equality and blocked on
+  the address alone. Re-matched (distance block, fuzzy name ≥ 0.90) the real rate
+  is **≈ 32 %**. The corrected normalisers live in `src/arkhinfra/basecheck.py`, kept
+  **deliberately separate** from `v3_common.py` so the older reports keep
+  producing what they produced before — do not merge them without re-rendering
+  and re-checking every v3 report. `scripts/build_ru_basecheck.py` builds its
+  Russian twin. The 3.6 % figure still stands in
+  `reports/v3/eda-v3-validation.pdf`; treat it as superseded.
+- `analysis/v3/eda-v3-ru.qmd` / `eda-v3-validation-ru.qmd` → the Russian twins
+  (`pixi run eda-v3-ru` / `eda-v3-val-ru` / `eda-v3-all-ru`). **Only the prose
+  and the figure/table captions are translated** — every `{python}` cell is
+  byte-identical to the English source, so the rendered tables and charts stay in
+  English. Their front matter needs `sansfont: "Arial"` (KOMA sans has no
+  Cyrillic); their code cells need no adjustment at all, since the setup-cell
+  bootstrap locates the repository root on its own.
+  All three v3 reports have a Russian twin, the basecheck one included
+  (`pixi run eda-v3-base-ru`).
+  `scripts/build_ru_v3.py` regenerates `eda-v3-ru.qmd` from the English source:
+  after editing `analysis/v3/eda-v3.qmd`, re-run it rather than hand-patching the
+  twin, and add any new prose block to its translation map. Follow it with
+  `scripts/ru_numfmt.py`, which puts prose numbers into Russian convention
+  (decimal comma, space for thousands) in all three twins — it is idempotent, and it
+  deliberately skips the YAML front matter, where `fig-width: 7.2` must keep its
+  decimal point.
+
+### Loader gotchas for the third delivery
+
+- `export_base_*.xlsx` **cannot be opened by openpyxl** — its `styles.xml` has a
+  fill entry that fails openpyxl's type check. `load_export_base()` re-zips the
+  file in memory with a minimal stylesheet first.
+- Its first data row **repeats the header labels**; drop it (10,557 real records,
+  not 10,558).
+- One of its header cells (`Район города`) is stored **decomposed** — `и` plus a
+  combining breve instead of `й` — so indexing that column by its printed name
+  raises `KeyError` until the header is NFC-normalised. Data cells are NFC.
+- Its `Координаты (широта, долгота)` column is **space-separated despite the
+  name**, and rounded to 3 decimals (≈ ±55 m at this latitude).
+
+## Known data caveats
+
+- District (`district_orig`) assignment in the **first** export is skewed — ~71%
+  of objects fall into one okrug (Oktyabrsky), and Isakogorsky/Tsiglomensky are
+  merged into one label. Treat district-level results from `data/raw/` as
+  provisional. **The third delivery fixes this city-wide** (largest okrug 35%,
+  all nine okrugs separate); the second delivery had fixed it for its three
+  okrugs only.
+- The second-delivery export is **OSM-only**. **The third delivery restores
+  2GIS** — but corroboration is still rare: 172 objects (2.4%) are confirmed by
+  both providers, 6,504 (89.6%) rest on OSM alone.
+- The third export's `match_distance_meters` / `match_name_similarity` are a
+  **deduplication key, not independent verification** — 99.5% sit at exactly 0 m
+  and 99.8% at similarity exactly 1.00.
+- `website_check_status` is **empty for every record** in the third export, and
+  `opening_date_orig` is populated for 0.6%.
+- **`recode_2022()` has a live bug in `analysis/v1/eda.qmd` and `analysis/v2/eda-v2.qmd`**:
+  it lowercases `type_orig`, then tests it against a *capitalised* `GROCERY_TYPES`,
+  so the test never fires and the **`Grocery shops` class is always empty** — its
+  objects fall through to `Other (outside 2022 scheme)`. Fixed in
+  `src/arkhinfra/v3_common.py` only. Scale: 811 objects in the third export, 854 in the
+  first, and 392 of the 1,753 records in the 2022 benchmark (22%). Any published
+  `Other` count from the first- or second-delivery reports is inflated. Port the
+  fix before re-rendering those reports, and keep all three copies in sync.
+- The `Industrial` class is **dominated by name-substring false positives** (25
+  objects, including a hostel and a jewellery shop). Do not report it per okrug.
+- **The ARKTMED panel is no longer synthetic.** The second-delivery panel had
+  27 of 27 testable series exactly linear in time (R² ≥ 0.999); the third has
+  **0 of 11**, median R² 0.43, and cites named Rosstat files rather than portal
+  home pages. Its numbers are citable — but every **health-outcome indicator was
+  removed** (morbidity, mortality, life expectancy, air pollution, emissions),
+  the risk-index sheet is empty, and outside the climate series it is a two- to
+  three-year snapshot with provisional 2026 values.
+- The commercial dump's **`Район города` is empty for all 10,557 records**, so
+  okrug can only be recovered spatially; with coordinates rounded to ±55 m it
+  cannot support record-level matching.
+- **The contractor's reported 94.3% match rate against 2022 does not survive
+  independent re-checking.** Their "confirmed match" tier is sound, but their
+  "probable match" tier is mostly coordinate proximity (median name similarity
+  0.51). Independent recall is ~64%; see `reports/v3/eda-v3-validation.pdf`.
+- **Five okrugs remain unvalidated against any benchmark** — the 2022 study
+  covers Lomonosovsky, Oktyabrsky and Maiskaya Gorka only.

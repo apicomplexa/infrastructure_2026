@@ -100,4 +100,4 @@ and risk factors are distributed across Arkhangelsk okrugs) and a **manual/semi-
 automated methodology** limited to three okrugs and 2,528 objects. The current
 stage (see [`infrastructure_rf.md`](infrastructure_rf.md)) automates collection
 and cross-check across 7+ sources and scales to the full-city 2026 export
-(~7,228 objects) analyzed in `analysis/eda.qmd`.
+(~7,228 objects) analyzed in `analysis/v1/eda.qmd`.
