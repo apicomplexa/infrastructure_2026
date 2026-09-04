@@ -43,3 +43,8 @@ V2_SUM = RAW2 / "итоги_сравнения_3_округа.csv"
 V3_CSV = RAW3 / "infrastructure_архангельск_2026-08-31_quality_excel.csv"
 V3_BASE = RAW3 / "export_base_688669_zal6mp.xlsx"
 V3_ARK = RAW3 / "ARKTMED_Arkhangelsk_2021-2026_all_categories_20260831_172749.xlsx"
+
+# Alternative source: FSRAR consolidated licence registry (2026-07-01 snapshot).
+RAW_EGAIS = DATA / "raw_alter_egais"
+EGAIS_XML = RAW_EGAIS / "data-20260701t0000-structure-20190918t0000.xml"
+EGAIS_TSV = PROC / "egais_licences_arkhangelsk.tsv"
