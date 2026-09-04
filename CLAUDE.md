@@ -13,13 +13,13 @@ application — a small analysis repo. Background is in `docs/` and `README.md`.
 Four top-level directories carry the work, split by *kind*, and the analysis and
 report trees are split again by *delivery*:
 
-- `analysis/v1|v2|v3/` — report **sources** only (`.qmd`). The Russian twin of a
-  report sits beside its English original as `*-ru.qmd`.
-- `reports/v1|v2|v3/` — rendered **PDFs**, written by the pixi tasks via
+- `analysis/v1|v2|v3|egais/` — report **sources** only (`.qmd`). The Russian
+  twin of a report sits beside its English original as `*-ru.qmd`.
+- `reports/v1|v2|v3|egais/` — rendered **PDFs**, written by the pixi tasks via
   `--output-dir`. **Git-ignored**: they are deliverables, rebuilt on demand.
   Never hand-edit anything here, and do not add them to the index.
 - `src/arkhinfra/` — the importable **library**: `paths.py`, `v3_common.py`,
-  `basecheck.py`, `match_2022.py`.
+  `basecheck.py`, `match_2022.py`, `egais.py`.
 - `scripts/` — **runnable** entry points only. `scripts/match_2022.py` is a thin
   launcher around `arkhinfra.match_2022`, which is a library module because a
   report imports it.
@@ -46,6 +46,9 @@ always run tools through pixi:
 - `pixi run eda-v2` — render the second-delivery report → `reports/v2/eda-v2.pdf`
 - `pixi run build-ru` — regenerate the Russian v3 twins from the English sources
   and normalise their numbers (the `build_ru_*` → `ru_numfmt` sequence in one go)
+- `pixi run parse-egais` — stream the 10.9 GB FSRAR licence registry into
+  `data/processed/egais_licences_arkhangelsk.tsv` (~6 min)
+- `pixi run eda-egais` — render the licence-registry report → `reports/egais/eda-egais.pdf`
 - `pixi run profile` — quick dataset profile
 
 The EDA is parameterised (`dataset: enriched | health`, a `parameters`-tagged
@@ -190,6 +193,37 @@ Reports and helpers:
 - Its `Координаты (широта, долгота)` column is **space-separated despite the
   name**, and rounded to 3 decimals (≈ ±55 m at this latitude).
 
+## Alternative source: the FSRAR licence registry (`data/raw_alter_egais/`)
+
+Not a commissioned delivery — the state consolidated register of licences,
+downloaded as open data (2026-07-01 snapshot). One **10.9 GB XML**, 1,660,448
+records nationwide, git-ignored for bulk like the v2/v3 payloads.
+
+- `scripts/parse_egais.py` (`pixi run parse-egais`) reduces it to
+  `data/processed/egais_licences_arkhangelsk.tsv` — 2,100 rows × 27 columns.
+  It **streams**: 16 MiB chunks cut on `</row>`, and only segments whose raw
+  bytes already contain "Архангельск" reach the XML parser. Never load this
+  file whole. A full pass takes ~6 minutes.
+- `src/arkhinfra/egais.py` — loader, Russian-date parser, street normaliser and
+  the okrug recovery. Kept **separate from `v3_common.py`** (different source,
+  different grain); what is shared is imported from `v3_common`, not copied.
+- `analysis/egais/eda-egais.qmd` → `reports/egais/eda-egais.pdf`
+  (`pixi run eda-egais`). English only; no Russian twin yet.
+- `docs/egais_source_notes.md` — the full field-level write-up.
+
+Two things about this source govern how it may be used:
+
+- **It holds alcohol licences, not tobacco.** The regulator covers both, the
+  data has no tobacco class at all. It is a risk-factor layer, not a tobacco
+  source.
+- **It is a register, not a list of open outlets.** Only 585 of 2,100 city rows
+  are in force. Always filter `status` / `is_active` before counting.
+
+The published **XSD does not describe the published file** — it declares
+`Details/Detail` with attributes, the file delivers `data/row` with child
+elements, and names differ (the registry's own `выезного` typo included). A
+parser written from the documentation returns nothing.
+
 ## Known data caveats
 
 - District (`district_orig`) assignment in the **first** export is skewed — ~71%
@@ -230,5 +264,12 @@ Reports and helpers:
   independent re-checking.** Their "confirmed match" tier is sound, but their
   "probable match" tier is mostly coordinate proximity (median name similarity
   0.51). Independent recall is ~64%; see `reports/v3/eda-v3-validation.pdf`.
+- **The commissioned exports undercount alcohol retail about fivefold.** The
+  licence registry lists 577 alcohol retail licences in force city-wide against
+  the third export's 110 `Alcohol shops`; the gap is structural (chains sell
+  under a grocery licence) and is worst in the outlying okrugs (Varavino-
+  Faktoriya 13x, Tsiglomensky 12x) and mildest in the centre, so okrug risk
+  comparisons built on `Alcohol shops` are biased toward the centre. See
+  `reports/egais/eda-egais.pdf`.
 - **Five okrugs remain unvalidated against any benchmark** — the 2022 study
   covers Lomonosovsky, Oktyabrsky and Maiskaya Gorka only.

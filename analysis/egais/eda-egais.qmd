@@ -1,0 +1,550 @@
+---
+title: "Arkhangelsk Urban Infrastructure — EDA of the FSRAR licence registry"
+subtitle: "An alternative source: the state consolidated register of licences, 2026-07-01 snapshot"
+author: "Northern State Medical University — Infrastructure project"
+date: today
+lang: en
+format:
+  pdf:
+    pdf-engine: xelatex
+    mainfont: "Arial"
+    monofont: "Consolas"
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    fig-width: 7.2
+    fig-height: 4.4
+    fig-align: center
+    fig-pos: "H"
+    geometry:
+      - margin=2.2cm
+    colorlinks: true
+execute:
+  echo: false
+  warning: false
+  message: false
+jupyter: python3
+---
+
+```{python}
+# | label: setup
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import seaborn as sns
+from IPython.display import Markdown
+
+# Locate the repository root, so this report may live at any depth under it.
+_root = next(p for p in [Path.cwd(), *Path.cwd().parents]
+             if (p / "pixi.toml").exists())
+sys.path.insert(0, str(_root / "src"))
+from arkhinfra import v3_common as c  # noqa: E402
+from arkhinfra import egais as e  # noqa: E402
+
+mpl.rcParams.update({
+    "font.family": "DejaVu Sans",   # full Cyrillic coverage for figure labels
+    "figure.dpi": 150,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "axes.grid": True,
+    "grid.alpha": 0.25,
+    "axes.titlesize": 12,
+    "axes.titleweight": "bold",
+})
+
+ACCENT, RISK, GREEN, PURPLE = c.ACCENT, c.RISK, c.GREEN, c.PURPLE
+MIXED, OLD = c.MIXED, c.OLD
+INK = "#1f2933"
+
+# Licence state keeps a fixed assignment: one colour for "in force", one for
+# every way of being out of force, so the two never swap between charts.
+STATUS_COLORS = {
+    "Active": GREEN, "Expired": OLD, "Terminated": MIXED,
+    "Reissued": PURPLE, "Annulled": RISK,
+}
+
+
+def barh(series, title, xlabel, color=ACCENT, fmt_pct=False, figsize=(7.2, 4.4)):
+    s = series.sort_values(ascending=True)
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.barh(s.index, s.values, color=color)
+    total = s.sum()
+    for y, v in enumerate(s.values):
+        lbl = f"{v:,} ({v / total * 100:.0f}%)" if fmt_pct else f"{v:,}"
+        ax.text(v, y, " " + lbl, va="center", ha="left", fontsize=8, color=INK)
+    ax.set_xlabel(xlabel)
+    ax.set_title(title)
+    ax.margins(x=0.16)
+    ax.grid(axis="y", visible=False)
+    plt.tight_layout()
+    plt.show()
+```
+
+```{python}
+# | label: load
+eg = e.load_egais()
+v3 = c.load_v3()
+v3["category_2022"] = c.recode_2022(v3)
+
+eg["okrug_key"], eg["okrug_source"] = e.assign_okrug(eg, v3)
+
+n_rows = len(eg)
+n_lic = eg["licence_no"].nunique()
+n_addr = eg["outlet_address"].nunique()
+n_org = eg["org_inn"].nunique()
+
+active = eg[eg["is_active"]]
+retail = eg[eg["is_active"] & eg["is_retail"]]
+n_active, n_retail = len(active), len(retail)
+
+OKRUG_ORDER = [k for k in eg["okrug_key"].value_counts().index if k != "Unknown"]
+```
+
+# Introduction
+
+This report profiles a source that was **not commissioned**: the state
+consolidated register of licences, published as open data by
+Росалкогольтабакконтроль and downloaded as a 10.9 GB XML covering the whole
+country. Unlike every delivery so far, nothing about it was specified by
+this project — it is a public register that happens to record, for every
+licensed outlet in Arkhangelsk, an address and often a coordinate pair.
+
+Two facts about it govern everything that follows, and neither is visible from
+the dataset's title.
+
+## It holds alcohol licences, not tobacco
+
+The regulator's remit covers both alcohol and tobacco, and the register was
+approached in the expectation of tobacco retail. It contains none. Every one of
+the `{python} f"{n_rows:,}"` Arkhangelsk records is an alcohol or ethanol
+licence, so for this project the register is a **risk-factor layer**, parallel
+to the `Alcohol shops` class of the commissioned exports — not a new
+health-supporting one, and not a tobacco source.
+
+## It is a register, not a list of open outlets
+
+Only `{python} f"{n_active:,}"` of the `{python} f"{n_rows:,}"` rows
+(`{python} f"{n_active / n_rows * 100:.0f}"` %) are licences still in force.
+The rest expired, were terminated, reissued or annulled, and they keep their
+historic address — a register accumulates, it does not refresh. Every count in
+this report that is meant to describe the city today is taken from the active
+subset.
+
+```{python}
+# | label: tbl-shape
+# | tbl-cap: "What the extract contains. A row is an outlet-licence pair: one licence covers many outlets."
+rows = [
+    ["Rows in the extract", f"{n_rows:,}"],
+    ["Distinct licences", f"{n_lic:,}"],
+    ["Distinct outlet addresses", f"{n_addr:,}"],
+    ["Distinct organisations (INN)", f"{n_org:,}"],
+    ["Licences in force", f"{n_active:,}"],
+    ["In force and retail-facing", f"{n_retail:,}"],
+    ["With usable coordinates", f"{int(eg['has_coords'].sum()):,}"],
+]
+Markdown(pd.DataFrame(rows, columns=["", "Value"]).to_markdown(index=False))
+```
+
+# Part I — extraction {#sec-extract}
+
+The register ships as one 10.9 GB XML holding **1,660,448 records** for the
+whole country, which does not fit in memory. `scripts/parse_egais.py`
+(`pixi run parse-egais`) reads it in 16 MiB chunks, cuts them on the `</row>`
+boundary, and hands to the XML parser only those segments whose raw bytes
+already contain "Архангельск". That is a substring test over the whole file and
+a real parse over the 12,311 records that survive it; the pass takes about six
+minutes and never holds more than one chunk plus the matched rows.
+
+Of those 12,311 mentions, `{python} f"{n_rows:,}"` have an **outlet** address in
+the city itself. The remainder name the region, a different settlement in it, or
+an Arkhangelsk-registered company trading elsewhere.
+
+## The published schema does not describe the published file
+
+The dataset ships an XSD. It is wrong. The schema declares `Details/Detail`
+elements carrying the data as **attributes**; the file delivers `data/row` with
+the data in **child elements**, and several names differ between the two —
+including the register's own typo, `Дата__время_и_место_выезного_обслуживания`.
+A parser written from the documentation returns nothing at all. The field map in
+`parse_egais.py` follows the file.
+
+## What was carried across
+
+Of the register's 24 fields, `{python} "20"` are kept and four dropped. The
+dropped ones are the per-licence change history (a long free-text field that
+would have dominated the output size), the blank-form number, and the two
+mobile-service fields — all either empty throughout or irrelevant to spatial
+work. The result is a 2.0 MB TSV.
+
+```{python}
+# | label: fig-completeness
+# | fig-cap: "Field completeness in the extract. Two fields are empty for every record; coordinates reach just over half."
+cols = ["licence_no", "status", "date_issued", "org_name", "org_inn",
+        "outlet_address", "outlet_street", "outlet_house", "org_email",
+        "licence_prev_no", "coords_raw", "products"]
+fill = pd.Series({col: (eg[col].astype(str).str.strip() != "").mean() * 100
+                  for col in cols}).sort_values()
+fig, ax = plt.subplots(figsize=(7.2, 4.2))
+colors = [RISK if v < 60 else ACCENT for v in fill.values]
+ax.barh(fill.index, fill.values, color=colors)
+for y, v in enumerate(fill.values):
+    ax.text(v, y, f" {v:.0f}%", va="center", ha="left", fontsize=8, color=INK)
+ax.set_xlim(0, 108)
+ax.set_xlabel("Records with a value, %")
+ax.set_title("Field completeness — licence register extract")
+ax.grid(axis="y", visible=False)
+plt.tight_layout()
+plt.show()
+```
+
+`Виды_продукции` (product types) is empty for every single record, as is the
+blank-form number — the same pattern of declared-but-unpopulated fields the
+third delivery showed with `website_check_status`.
+
+# Part II — the licence portfolio {#sec-portfolio}
+
+```{python}
+# | label: fig-activity
+# | fig-cap: "Licensed activity. Two retail classes account for almost everything; wholesale, transport and production are marginal."
+barh(eg["activity_class"].value_counts(),
+     "Licensed activity — all records", "Licences", color=ACCENT, fmt_pct=True,
+     figsize=(7.2, 3.4))
+```
+
+The register distinguishes **off-trade** retail (a shop selling sealed bottles)
+from **on-trade** retail, where the same licence also covers consumption on the
+premises — a bar, a café, a restaurant. That distinction matters for a health
+study: the two have different exposure profiles, and the commissioned exports
+carry no equivalent of it anywhere.
+
+```{python}
+# | label: fig-status
+# | fig-cap: "Licence state. Expired and terminated records outnumber those in force by nearly three to one."
+counts = eg["status_en"].value_counts().reindex(e.STATUS_ORDER).dropna()
+fig, ax = plt.subplots(figsize=(7.2, 3.2))
+ax.barh(counts.index[::-1], counts.values[::-1],
+        color=[STATUS_COLORS[k] for k in counts.index[::-1]])
+for y, v in enumerate(counts.values[::-1]):
+    ax.text(v, y, f" {v:,} ({v / n_rows * 100:.0f}%)", va="center", ha="left",
+            fontsize=8, color=INK)
+ax.set_xlabel("Records")
+ax.set_title("Licence state — all records")
+ax.margins(x=0.18)
+ax.grid(axis="y", visible=False)
+plt.tight_layout()
+plt.show()
+```
+
+The register writes the same expiry state two ways — `истекла` and
+`срок действия истек` — which are folded together here. A consumer that treats
+them as distinct states undercounts expiry.
+
+```{python}
+# | label: fig-timeline
+# | fig-cap: "Licences by year of issue. The 2012 spike is a licensing-regime artefact, not a wave of openings."
+by_year = eg["issue_year"].value_counts().sort_index()
+by_year = by_year[by_year.index >= 2006]
+act_year = eg[eg["is_active"]]["issue_year"].value_counts().reindex(by_year.index).fillna(0)
+fig, ax = plt.subplots(figsize=(7.2, 3.6))
+ax.bar(by_year.index, by_year.values, color=OLD, label="All licences")
+ax.bar(act_year.index, act_year.values, color=GREEN, label="Still in force")
+ax.set_xlabel("Year of issue")
+ax.set_ylabel("Licences")
+ax.set_title("Licences issued per year")
+ax.legend(fontsize=8)
+plt.tight_layout()
+plt.show()
+```
+
+Issue dates run 2006–2026 and peak sharply in **2012**, when
+`{python} f"{int(by_year.get(2012, 0)):,}"` licences were issued — more than any
+three other years together. That is a re-registration wave under a changed
+licensing regime, not a burst of new shops, and it is a trap for anyone reading
+the register as a business-formation time series.
+
+```{python}
+# | label: tbl-orgs
+# | tbl-cap: "The ten organisations holding the most outlets currently in force. Federal chains dominate."
+short = active["org_name"].str.extract(r"Сокращенно:\s*(.+)$")[0].fillna(active["org_name"])
+top = short.str.replace(r'^["\s]+|["\s]+$', "", regex=True).value_counts().head(10)
+tbl = pd.DataFrame({"Organisation": [s[:44] for s in top.index],
+                    "Outlets in force": top.values})
+tbl["Share"] = [f"{v / n_active * 100:.1f}%" for v in top.values]
+Markdown(tbl.to_markdown(index=False))
+```
+
+Ownership is concentrated: the top ten holders account for
+`{python} f"{top.sum() / n_active * 100:.0f}"` % of all outlets currently in
+force, and the single largest — the Bristol chain — for
+`{python} f"{top.iloc[0] / n_active * 100:.0f}"` %. Alcohol availability in the
+city is therefore set by a handful of federal retail decisions rather than by
+many independent operators, which is a policy-relevant finding in itself.
+
+# Part III — recovering geography {#sec-geo}
+
+The register records **no okrug**. Since okrug is the unit every other report in
+this project works in, it has to be recovered, and `arkhinfra.egais.assign_okrug`
+does it by two routes in order of trust:
+
+1. **Coordinates** — the nearest object in the third-delivery export within
+   400 m lends its okrug.
+2. **Street name** — for rows without a usable coordinate, the okrug most of
+   that street's export objects sit in.
+
+```{python}
+# | label: tbl-okrug-source
+# | tbl-cap: "How each row's okrug was recovered. The weaker street route carries a third of the extract; nothing rests on it alone in the active subset."
+src_all = eg["okrug_source"].value_counts()
+src_act = active["okrug_source"].value_counts()
+tbl = pd.DataFrame({
+    "Route": ["Coordinates (≤400 m)", "Street name", "Unassigned"],
+    "All rows": [src_all.get("coordinates", 0), src_all.get("street", 0),
+                 src_all.get("unassigned", 0)],
+    "In force": [src_act.get("coordinates", 0), src_act.get("street", 0),
+                 src_act.get("unassigned", 0)],
+})
+tbl["All %"] = [f"{v / n_rows * 100:.0f}%" for v in tbl["All rows"]]
+tbl["In force %"] = [f"{v / n_active * 100:.0f}%" for v in tbl["In force"]]
+for col in ("All rows", "In force"):
+    tbl[col] = tbl[col].map(lambda v: f"{v:,}")
+Markdown(tbl.to_markdown(index=False))
+```
+
+Coordinates cover `{python} f"{eg['has_coords'].mean() * 100:.0f}"` % of rows.
+They are published as degrees-minutes-seconds strings, and eight of them are
+plainly wrong — a dropped leading digit places an Arkhangelsk café at longitude
+10.55°, in the North Sea. Those are flagged rather than silently mapped.
+
+```{python}
+# | label: fig-okrug
+# | fig-cap: "Licences in force per okrug, against the third-delivery export's Alcohol shops class in the same okrug."
+ok_act = retail["okrug_key"].value_counts().reindex(OKRUG_ORDER).fillna(0)
+v3_alc = (v3[v3["category_2022"] == "Alcohol shops"]["okrug_key"]
+          .value_counts().reindex(OKRUG_ORDER).fillna(0))
+y = np.arange(len(OKRUG_ORDER))
+fig, ax = plt.subplots(figsize=(7.2, 4.6))
+ax.barh(y + 0.2, ok_act.values, height=0.4, color=RISK, label=f"Licences in force ({int(ok_act.sum()):,})")
+ax.barh(y - 0.2, v3_alc.values, height=0.4, color=OLD, label=f"Export 'Alcohol shops' ({int(v3_alc.sum()):,})")
+for i, v in enumerate(ok_act.values):
+    ax.text(v, i + 0.2, f" {int(v)}", va="center", fontsize=7.5, color=INK)
+for i, v in enumerate(v3_alc.values):
+    ax.text(v, i - 0.2, f" {int(v)}", va="center", fontsize=7.5, color=INK)
+ax.set_yticks(y, OKRUG_ORDER)
+ax.set_xlabel("Objects")
+ax.set_title("Licensed alcohol retail vs. the commissioned export")
+ax.margins(x=0.16)
+ax.grid(axis="y", visible=False)
+ax.legend(fontsize=8, loc="lower right")
+plt.tight_layout()
+plt.show()
+```
+
+The register puts the most licensed outlets in **Lomonosovsky** and
+**Oktyabrsky**, the two central okrugs — the same pair the export ranks highest,
+so the two sources agree on shape. They disagree sharply on magnitude, which is
+@sec-crosscheck.
+
+# Part IV — spatial distribution {#sec-map}
+
+```{python}
+# | label: fig-map
+# | fig-cap: "Licensed alcohol outlets currently in force, on an OpenStreetMap/CARTO basemap. Only rows with a usable published coordinate are shown."
+pts = retail[retail["has_coords"]]
+fig, ax = plt.subplots(figsize=(7.2, 6.4))
+ax.scatter(pts["longitude"], pts["latitude"], s=16, alpha=0.8,
+           color=RISK, edgecolor="white", linewidth=0.3,
+           label=f"Licence in force ({len(pts):,})")
+ax.set_xlabel("Longitude")
+ax.set_ylabel("Latitude")
+ax.set_title("Licensed alcohol retail — outlets in force")
+ax.set_aspect(1 / np.cos(np.deg2rad(64.54)))
+try:
+    # Tiles are cached in data/tile_cache, so only the first render needs
+    # internet access; offline we fall back to the plain scatter.
+    import contextily as ctx
+    tile_cache = c.ROOT / "data" / "tile_cache"
+    tile_cache.mkdir(exist_ok=True)
+    ctx.set_cache_dir(str(tile_cache))
+    ctx.add_basemap(ax, crs="EPSG:4326", source=ctx.providers.CartoDB.Positron,
+                    attribution_size=5)
+    ax.grid(visible=False)
+except Exception:
+    ax.grid(alpha=0.2)
+ax.legend(loc="upper left", fontsize=8, markerscale=1.6, framealpha=0.9)
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+# | label: fig-map-trade
+# | fig-cap: "Off-trade outlets (shops, orange) against on-trade (bars and cafés, blue). On-trade clusters in the historic centre; off-trade follows residential districts outward."
+fig, ax = plt.subplots(figsize=(7.2, 6.4))
+for key, color in [(e.ACTIVITY_EN["retail"], RISK),
+                   (e.ACTIVITY_EN["catering"], ACCENT)]:
+    sub = pts[pts["activity_class"] == key]
+    ax.scatter(sub["longitude"], sub["latitude"], s=18, alpha=0.8,
+               color=color, edgecolor="white", linewidth=0.3,
+               label=f"{key} ({len(sub):,})")
+ax.set_xlabel("Longitude")
+ax.set_ylabel("Latitude")
+ax.set_title("Off-trade and on-trade alcohol retail")
+ax.set_aspect(1 / np.cos(np.deg2rad(64.54)))
+try:
+    import contextily as ctx
+    tile_cache = c.ROOT / "data" / "tile_cache"
+    tile_cache.mkdir(exist_ok=True)
+    ctx.set_cache_dir(str(tile_cache))
+    ctx.add_basemap(ax, crs="EPSG:4326", source=ctx.providers.CartoDB.Positron,
+                    attribution_size=5)
+    ax.grid(visible=False)
+except Exception:
+    ax.grid(alpha=0.2)
+ax.legend(loc="upper left", fontsize=8, markerscale=1.6, framealpha=0.9)
+plt.tight_layout()
+plt.show()
+
+# Distance from the city centre, to check the visual claim rather than assert it.
+_d = c.haversine_m(pts["latitude"], pts["longitude"], 64.5393, 40.5180)
+_by = pd.DataFrame({"cls": pts["activity_class"].to_numpy(), "d": _d}).groupby("cls")["d"].median()
+med_on = _by.get(e.ACTIVITY_EN["catering"], np.nan)
+med_off = _by.get(e.ACTIVITY_EN["retail"], np.nan)
+```
+
+The split is spatially real, not decorative: measured from the city centre, the
+median on-trade outlet sits `{python} f"{med_on / 1000:.1f}"` km out and the
+median off-trade outlet `{python} f"{med_off / 1000:.1f}"` km — bars and cafés
+hold the historic centre while shops follow housing outward.
+
+Note what the map cannot show. Coordinates are absent for
+`{python} f"{(1 - eg['has_coords'].mean()) * 100:.0f}"` % of the extract, and
+their presence is not random — they became a licensing requirement partway
+through the period, so older licences lack them. A map of this register is
+therefore biased toward **recently issued** outlets, and its density should not
+be read as a complete surface.
+
+# Part V — against the commissioned export {#sec-crosscheck}
+
+The third delivery classifies `{python} f"{int((v3['category_2022'] == 'Alcohol shops').sum()):,}"`
+of its 7,263 objects as `Alcohol shops`, city-wide. The register lists
+`{python} f"{n_retail:,}"` alcohol retail licences **currently in force**, one
+per address. The export therefore accounts for roughly a **fifth** of the city's
+licensed alcohol retail.
+
+```{python}
+# | label: match
+pts_m = retail[retail["has_coords"]]
+ref = v3.dropna(subset=["latitude", "longitude"])
+d = c.haversine_m(pts_m["latitude"].to_numpy()[:, None],
+                  pts_m["longitude"].to_numpy()[:, None],
+                  ref["latitude"].to_numpy()[None, :],
+                  ref["longitude"].to_numpy()[None, :])
+near = d.argmin(axis=1)
+dist = d[np.arange(len(pts_m)), near]
+within = dist <= 50
+near_cat = pd.Series(ref["category_2022"].to_numpy()[near[within]])
+cov = within.mean() * 100
+```
+
+This is not, however, a coverage failure. Taking every licensed outlet with a
+usable coordinate and asking what the export holds nearest to it,
+`{python} f"{cov:.0f}"` % have some export object within 50 m — the export knows
+about the buildings. What it does not know is that alcohol is sold in them.
+
+```{python}
+# | label: tbl-nearest
+# | tbl-cap: "What the export calls the object nearest each licensed outlet (within 50 m). Licensed alcohol retail is overwhelmingly filed as something else."
+vc = near_cat.value_counts()
+tbl = pd.DataFrame({"Export class of nearest object": vc.index,
+                    "Outlets": vc.values,
+                    "Share": [f"{v / vc.sum() * 100:.0f}%" for v in vc.values]})
+Markdown(tbl.to_markdown(index=False))
+```
+
+The reason is structural, not a defect in the contractor's work. A Russian
+grocery chain sells alcohol under a licence held by the shop; the shop is a
+`Продуктовый магазин` in any directory, and only a **specialised** alcohol shop
+is ever labelled as one. The export's `Alcohol shops` class counts shopfronts
+named for alcohol; the register counts the legal right to sell it. The second is
+what a health study means by exposure.
+
+```{python}
+# | label: fig-crosscheck
+# | fig-cap: "Alcohol availability per okrug under the two definitions. The register lifts every okrug, and reorders the middle of the ranking."
+comp = pd.DataFrame({
+    "Register (in force)": retail["okrug_key"].value_counts(),
+    "Export (Alcohol shops)": v3[v3["category_2022"] == "Alcohol shops"]["okrug_key"].value_counts(),
+}).reindex(OKRUG_ORDER).fillna(0)
+comp["ratio"] = comp["Register (in force)"] / comp["Export (Alcohol shops)"].replace(0, np.nan)
+fig, ax = plt.subplots(figsize=(7.2, 3.8))
+ax.bar(range(len(comp)), comp["ratio"].values, color=PURPLE)
+for i, v in enumerate(comp["ratio"].values):
+    if np.isfinite(v):
+        ax.text(i, v, f"{v:.1f}×", ha="center", va="bottom", fontsize=8, color=INK)
+ax.set_xticks(range(len(comp)), comp.index, rotation=35, ha="right", fontsize=8)
+ax.set_ylabel("Register ÷ export")
+ax.set_title("How much alcohol retail the export misses, by okrug")
+ax.grid(axis="x", visible=False)
+plt.tight_layout()
+plt.show()
+```
+
+The undercount is **not uniform**. It is mildest in the central and near-central
+okrugs — Solombalsky at `{python} f"{comp['ratio'].get('Solombalsky', float('nan')):.1f}"`×,
+Oktyabrsky at `{python} f"{comp['ratio'].get('Oktyabrsky', float('nan')):.1f}"`×,
+Lomonosovsky at `{python} f"{comp['ratio'].get('Lomonosovsky', float('nan')):.1f}"`× —
+where specialised alcohol shops are common enough for the export's class to
+catch a reasonable share. It is worst in the outlying residential okrugs, where
+alcohol is sold almost entirely through grocery chains: Varavino-Faktoriya at
+`{python} f"{comp['ratio'].get('Varavino-Faktoriya', float('nan')):.0f}"`× and
+Tsiglomensky at `{python} f"{comp['ratio'].get('Tsiglomensky', float('nan')):.0f}"`×.
+Any okrug-level risk
+comparison built on the export's `Alcohol shops` class alone is therefore biased
+**toward the centre** — it understates peripheral exposure more than central
+exposure, which is the opposite of the direction a health-equity analysis would
+want to be wrong in.
+
+# What this source is good for {#sec-verdict}
+
+- It is the **only source in the project with legal-status semantics**. Every
+  other delivery records that an object exists; this one records that it is
+  licensed, since when, until when, and whether the licence still stands.
+- It carries the **off-trade / on-trade split**, which no commissioned export
+  has, and which separates two different exposure mechanisms.
+- It is **independent of the contractor** and of 2GIS and OSM alike, so it is a
+  genuine external check rather than another view of the same directories.
+- It is **free, official and reproducible** — re-downloading the published
+  snapshot and re-running one script reproduces the extract exactly.
+
+# Caveats {#sec-caveats}
+
+- **No tobacco.** Despite the regulator's remit, the register contains no
+  tobacco licence class. The tobacco risk layer still rests on the commissioned
+  exports' 60 objects.
+- **Only `{python} f"{n_active / n_rows * 100:.0f}"` % of rows are in force.**
+  A count taken without filtering `status` overstates current provision by
+  roughly a factor of three, and mixes in addresses vacated years ago.
+- **Coordinates cover just over half the extract and are missing
+  non-randomly** — older licences lack them, so maps skew recent. Okrug figures
+  for `{python} f"{(eg['okrug_source'] == 'street').mean() * 100:.0f}"` % of
+  rows rest on a street-name lookup, not a coordinate.
+- **Okrug is inferred, never given.** It is borrowed from the third-delivery
+  export, so it inherits that export's okrug boundaries and any error in them,
+  and the two sources are no longer fully independent at okrug level.
+- **The grain is an outlet-licence pair.** `{python} f"{n_rows:,}"` rows are
+  `{python} f"{n_lic:,}"` licences at `{python} f"{n_addr:,}"` addresses.
+  Counting rows counts neither licences nor outlets.
+- **`outlet_region_code` is wrong on 4.2 % of rows** — 88 records carry a
+  foreign region code while holding a plain Arkhangelsk address. The extract
+  filters on the address for that reason; anyone re-deriving it from the region
+  code will lose those records.
+- **Novaya Zemlya rows are filed under Arkhangelsk.** Eight records place
+  `Белушья Губа` and `Рогачево` — 2,000 km north — inside the city. They carry
+  no usable coordinate and are excluded from the maps, but a naive address
+  filter keeps them.
+- **A licence is not an open shop.** It is a legal permission at an address; it
+  does not prove the outlet is trading today, and the register has no closure
+  date beyond licence expiry.

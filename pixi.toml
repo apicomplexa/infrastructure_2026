@@ -22,6 +22,7 @@ eda-v3-val-ru = { cmd = "quarto render analysis/v3/eda-v3-validation-ru.qmd --to
 eda-v3-all-ru = { cmd = "quarto render analysis/v3/eda-v3-ru.qmd --to pdf --output-dir ../../reports/v3 && quarto render analysis/v3/eda-v3-validation-ru.qmd --to pdf --output-dir ../../reports/v3", description = "Render both Russian third-delivery reports" }
 eda-v3-base-ru = { cmd = "quarto render analysis/v3/eda-v3-basecheck-ru.qmd --to pdf --output-dir ../../reports/v3", description = "Render the Russian commercial-directory source check -> reports/v3/eda-v3-basecheck-ru.pdf" }
 match-2022 = { cmd = "python scripts/match_2022.py", description = "Run the independent 2022 <-> v3 record matcher; writes data/processed/match_2022_*.csv" }
+eda-egais = { cmd = "quarto render analysis/egais/eda-egais.qmd --to pdf --output-dir ../../reports/egais", description = "Render the FSRAR licence-registry EDA -> reports/egais/eda-egais.pdf" }
 parse-egais = { cmd = "python scripts/parse_egais.py", description = "Stream the 10.9 GB FSRAR licence registry -> data/processed/egais_licences_arkhangelsk.tsv" }
 profile = { cmd = "python scripts/profile_data.py", description = "Print a quick profile of the enriched dataset" }
 build-ru = { cmd = "python scripts/build_ru_v3.py && python scripts/build_ru_basecheck.py && python scripts/ru_numfmt.py", description = "Regenerate the Russian v3 twins from the English sources, then normalise their number formatting" }
