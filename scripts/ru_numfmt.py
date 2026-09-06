@@ -13,7 +13,7 @@ import re
 import sys
 
 FILES = ["analysis/v3/eda-v3-ru.qmd", "analysis/v3/eda-v3-validation-ru.qmd",
-         "analysis/v3/eda-v3-basecheck-ru.qmd"]
+         "analysis/v3/eda-v3-basecheck-ru.qmd", "analysis/v4/eda-v4-ru.qmd"]
 
 # Inline expressions in prose: wrap so the emitted number reads as Russian.
 INLINE = {
@@ -40,6 +40,55 @@ INLINE = {
     '`{python} f"{WEAK:.2f}"`':
         '`{python} f"{WEAK:.2f}".replace(".", ",")`',
 }
+
+# The fourth-delivery twin (analysis/v4/eda-v4-ru.qmd).  Triple-quoted because
+# several of these expressions contain both quote characters themselves.
+INLINE.update({
+    '''`{python} f"{n_sites / len(v3) * 100:.1f}"`''':
+        '''`{python} f"{n_sites / len(v3) * 100:.1f}".replace(".", ",")`''',
+    '''`{python} f"{osm_only_alc * 100:.1f}"`''':
+        '''`{python} f"{osm_only_alc * 100:.1f}".replace(".", ",")`''',
+    '''`{python} f"{ratio_v3:.1f}"`''':
+        '''`{python} f"{ratio_v3:.1f}".replace(".", ",")`''',
+    '''`{python} f"{ratio_v4:.2f}"`''':
+        '''`{python} f"{ratio_v4:.2f}".replace(".", ",")`''',
+    '''`{python} f"{sp3:.1f}"`''':
+        '''`{python} f"{sp3:.1f}".replace(".", ",")`''',
+    '''`{python} f"{sp4:.1f}"`''':
+        '''`{python} f"{sp4:.1f}".replace(".", ",")`''',
+    '''`{python} f"{okr['Ratio vs v4'].min():.2f}"`''':
+        '''`{python} f"{okr['Ratio vs v4'].min():.2f}".replace(".", ",")`''',
+    '''`{python} f"{okr['Ratio vs v4'].max():.2f}"`''':
+        '''`{python} f"{okr['Ratio vs v4'].max():.2f}".replace(".", ",")`''',
+    '''`{python} f"{raw_t['match_distance_meters'].isna().mean() * 100:.1f}"`''':
+        '''`{python} f"{raw_t['match_distance_meters'].isna().mean() * 100:.1f}".replace(".", ",")`''',
+    '''`{python} f"{raw_a['match_distance_meters'].isna().mean() * 100:.1f}"`''':
+        '''`{python} f"{raw_a['match_distance_meters'].isna().mean() * 100:.1f}".replace(".", ",")`''',
+    '''`{python} f"{raw_v3['match_distance_meters'].isna().mean() * 100:.1f}"`''':
+        '''`{python} f"{raw_v3['match_distance_meters'].isna().mean() * 100:.1f}".replace(".", ",")`''',
+    '''`{python} f"{rev3_50}"`''':
+        '''`{python} f"{rev3_50}".replace(".", ",")`''',
+    '''`{python} f"{rev4_50}"`''':
+        '''`{python} f"{rev4_50}".replace(".", ",")`''',
+    '''`{python} f"{rev4_100}"`''':
+        '''`{python} f"{rev4_100}".replace(".", ",")`''',
+    '''`{python} f"{n_tob:,}"`''':
+        '''`{python} f"{n_tob:,}".replace(",", " ")`''',
+    '''`{python} f"{n_alc:,}"`''':
+        '''`{python} f"{n_alc:,}".replace(",", " ")`''',
+    '''`{python} f"{n_sites:,}"`''':
+        '''`{python} f"{n_sites:,}".replace(",", " ")`''',
+    '''`{python} f"{n_tob + n_alc:,}"`''':
+        '''`{python} f"{n_tob + n_alc:,}".replace(",", " ")`''',
+    '''`{python} r_v3_al`''':
+        '''`{python} r_v3_al.replace(".", ",")`''',
+    '''`{python} r_v3_tb`''':
+        '''`{python} r_v3_tb.replace(".", ",")`''',
+    '''`{python} r_v4_al`''':
+        '''`{python} r_v4_al.replace(".", ",")`''',
+    '''`{python} r_v4_tb`''':
+        '''`{python} r_v4_tb.replace(".", ",")`''',
+})
 
 # A bare decimal number, not part of a version/path/identifier.
 DEC = re.compile(r"(?<![\w.,/-])(\d{1,3})\.(\d{1,3})(?![\d.])")

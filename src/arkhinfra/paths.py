@@ -23,6 +23,7 @@ DATA = ROOT / "data"
 RAW = DATA / "raw"
 RAW2 = DATA / "raw_v2"
 RAW3 = DATA / "raw_v3"
+RAW4 = DATA / "raw_v4"
 PROC = DATA / "processed"
 TILE_CACHE = DATA / "tile_cache"
 
@@ -43,6 +44,12 @@ V2_SUM = RAW2 / "итоги_сравнения_3_округа.csv"
 V3_CSV = RAW3 / "infrastructure_архангельск_2026-08-31_quality_excel.csv"
 V3_BASE = RAW3 / "export_base_688669_zal6mp.xlsx"
 V3_ARK = RAW3 / "ARKTMED_Arkhangelsk_2021-2026_all_categories_20260831_172749.xlsx"
+
+# Fourth delivery (2026-09-03/04) -- two risk-layer extracts, not a new survey.
+# One file per risk factor; both carry the v3 column schema and re-tag objects
+# that are already in V3_CSV.
+V4_TOBACCO = RAW4 / "infrastructure_архангельск_2026-09-03_quality_excel табачное изделие.csv"
+V4_ALCOHOL = RAW4 / "infrastructure_архангельск_2026-09-04_quality_excel алкоголь.csv"
 
 # Alternative source: FSRAR consolidated licence registry (2026-07-01 snapshot).
 RAW_EGAIS = DATA / "raw_alter_egais"

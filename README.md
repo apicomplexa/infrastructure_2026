@@ -26,10 +26,15 @@ presentations.
 │       ├── infrastructure_архангельск_2026-08-31_quality_excel.csv  # city-wide export, 7,263 objects
 │       ├── export_base_688669_zal6mp.xlsx                # commercial directory dump, 10,557 records
 │       └── ARKTMED_Arkhangelsk_2021-2026_all_categories_20260831_172749.xlsx  # rebuilt indicator panel
+│   └── raw_v4/                  # fourth delivery, 2026-09-03/04 (read-only)
+│       ├── infrastructure_архангельск_2026-09-03_quality_excel табачное изделие.csv  # tobacco risk layer, 749 rows
+│       └── infrastructure_архангельск_2026-09-04_quality_excel алкоголь.csv          # alcohol risk layer, 945 rows
 ├── docs/                        # English documentation extracted from the presentations
 │   ├── infrastructure_rf.md         # the ИнфраструктураРФ program (current stage)
 │   ├── report_arkhangelsk_2022.md   # 2022 report summary (previous stage)
-│   └── crosswalk_2022.md            # 2026 -> 2022 taxonomy crosswalk and its defects
+│   ├── crosswalk_2022.md            # 2026 -> 2022 taxonomy crosswalk and its defects
+│   ├── egais_source_notes.md        # the FSRAR licence registry, field by field
+│   └── v4_source_notes.md           # the fourth delivery: what it is and how to read it
 ├── references/                  # original presentations (binary, source of docs/)
 │   ├── infrastructure_rf.pptx
 │   └── report_arkhangelsk_2022.pptx
@@ -46,20 +51,31 @@ presentations.
 │       ├── eda-v3-validation-ru.qmd
 │       ├── eda-v3-basecheck.qmd     # commercial directory profiled + re-matched
 │       └── eda-v3-basecheck-ru.qmd
+│   ├── v4/                      # fourth delivery (data/raw_v4)
+│   │   ├── eda-v4.qmd           # risk layers vs the 2022 study and the licence registry
+│   │   └── eda-v4-ru.qmd        #   Russian twin — prose only, tables stay English
+│   └── egais/                   # the FSRAR licence registry (not a commissioned delivery)
+│       └── eda-egais.qmd
 ├── reports/                     # rendered PDFs — git-ignored, rebuilt by pixi tasks
 │   ├── v1/                      # eda.pdf, eda-health.pdf + their -ru twins
 │   ├── v2/                      # eda-v2.pdf
-│   └── v3/                      # eda-v3.pdf, -validation.pdf, -basecheck.pdf + twins
+│   ├── v3/                      # eda-v3.pdf, -validation.pdf, -basecheck.pdf + twins
+│   ├── v4/                      # eda-v4.pdf + its -ru twin
+│   └── egais/                   # eda-egais.pdf
 ├── src/arkhinfra/               # importable library, shared by reports and scripts
 │   ├── paths.py                 # every path in the repo, resolved from its root
 │   ├── v3_common.py             # shared loaders / recoding for the v3 reports
 │   ├── match_2022.py            # independent 2022 <-> 2026 record matcher
-│   └── basecheck.py             # export_base matcher (stricter normalisers)
+│   ├── basecheck.py             # export_base matcher (stricter normalisers)
+│   ├── egais.py                 # FSRAR licence-registry loader and okrug recovery
+│   └── v4_common.py             # fourth-delivery loaders, tiers, corrected recoder
 ├── scripts/                     # runnable entry points
 │   ├── profile_data.py          # quick dataset profile
 │   ├── match_2022.py            # CLI launcher for arkhinfra.match_2022
 │   ├── build_ru_v3.py           # regenerate the Russian twin of eda-v3.qmd
 │   ├── build_ru_basecheck.py    # regenerate the Russian twin of the basecheck report
+│   ├── build_ru_v4.py           # regenerate the Russian twin of eda-v4.qmd
+│   ├── parse_egais.py           # stream the FSRAR registry XML -> processed TSV
 │   └── ru_numfmt.py             # Russian number conventions in the twins
 ├── pixi.toml                    # environment & tasks (pixi / conda-forge)
 └── pixi.lock
@@ -146,7 +162,7 @@ the city as a whole, and is unrelated to the object export.
 ## Obtaining the data
 
 `data/raw/` (first delivery) is in the repository. **`data/raw_v2/` and
-`data/raw_v3/` are not** — 8.6 MB of vendor spreadsheets, kept out of git for
+`data/raw_v3/` and `data/raw_v4/` are not** — 8.6 MB of vendor spreadsheets, kept out of git for
 bulk. Copy them from the project archive into those two directories before
 rendering anything beyond the first-delivery reports; the file names the loaders
 expect are listed in the layout tree above and in `src/arkhinfra/paths.py`.
@@ -330,13 +346,71 @@ Files in `data/raw_v3/` keep their original names.
   normalisers live in `src/arkhinfra/basecheck.py`, kept separate from
   `src/arkhinfra/v3_common.py` so the earlier reports are unaffected.
 
-### Russian twins of the third-delivery reports
+## Fourth delivery — `data/raw_v4/` (2026-09-03 / 2026-09-04)
+
+Two CSVs, one per risk factor, analysed in
+[`reports/v4/eda-v4.pdf`](reports/v4/eda-v4.pdf) (`pixi run eda-v4`), with a
+Russian twin at [`reports/v4/eda-v4-ru.pdf`](reports/v4/eda-v4-ru.pdf)
+(`pixi run eda-v4-ru`). Full
+field-level notes are in [`docs/v4_source_notes.md`](docs/v4_source_notes.md).
+
+**It is not a fourth survey — it is a risk-attribution layer over the third.**
+100% of the 749 tobacco rows and 99.8% of the 945 alcohol rows sit within 100 m
+of an object `data/raw_v3/` already held, and 94–98% of their source ids are ids
+v3 already cites. What the delivery adds is a judgement about which existing
+objects plausibly sell alcohol or tobacco. The two files overlap on 359
+coordinates, so the combined layer is **1,335 distinct sites**, not 1,694.
+
+| Artefact | 3rd (`raw_v3/`) | 4th (`raw_v4/`) |
+| --- | --- | --- |
+| Column schema | 22 columns | identical, dtypes included |
+| `category_orig` / `type_orig` vocabulary | third taxonomy | **fourth taxonomy**, no shared value |
+| Alcohol outlets recognised | 110 | 945 (638 off-trade, 307 on-trade) |
+| Tobacco outlets recognised | 60 | 749 |
+| Evidence tier | — | 82% `Возможная …` (inferred), 18% direct |
+| All nine okrugs separate | yes | yes |
+
+## Key findings — fourth delivery
+
+- **The schema promise holds as a container, not as a vocabulary.** Column
+  names, order and dtypes are identical to the third delivery, so existing code
+  reads the files unchanged. But `category_orig` / `type_orig` carry a fourth
+  taxonomy, and **`recode_2022()` silently drops 698 of 749 tobacco rows on it**
+  — the rule tests for the stem `табак`, every new label spells it `табач-`.
+  Fixed in `v4_common.recode_2022_v4()`, deliberately not in `v3_common`.
+- **Four rows in five are an inference, not an observation.** The `Возможная …`
+  types mean "this object's type is compatible with selling it"; the
+  contractor's own comment says the product's presence
+  *требует отдельной проверки*. Report the direct and inferred tiers separately.
+- **The fivefold alcohol undercount closes.** Off-trade objects rise from 110 to
+  **638** against **442** licences in force in the FSRAR registry; the
+  licences-per-object ratio moves from 4.0 to 0.69, and the okrug spread narrows
+  from a factor of 4.2 to 1.6 (every okrug now between 0.57 and 0.92). The share
+  of licensed outlets with a matching export object within 50 m rises from
+  **18.9% to 73.6%** (90.8% at 100 m). **Okrug-level alcohol risk comparisons
+  become defensible for the first time.**
+- **No improvement against the 2022 benchmark.** Recall moves 49.1% → 50.0%
+  (alcohol) and 34.8% → 32.6% (tobacco). Most of the shortfall is same-site
+  rebranding — 83% of 2022 alcohol sites have *some* v4 risk object within 50 m
+  — but that is an argument, not a measurement. The 2022 list is the wrong
+  benchmark for a layer that is mostly inferred availability.
+- **The alcohol layer is well calibrated without being verified:** 97.6% of it
+  rests on OSM alone, worse than the third delivery. The tobacco layer is the
+  best-corroborated file the project has received (37.7% 2GIS, 7.5% both) but
+  **has no independent benchmark of any kind** — the licence registry holds no
+  tobacco class.
+- **27 pharmacies are false positives** in the combined layer, caught by the
+  type rule; drop them before building any risk index.
+
+### Russian twins of the third- and fourth-delivery reports
 
 `analysis/v3/` holds a Russian twin (`*-ru.qmd`) beside each of the three English
-v3 reports. **Only the narrative prose and the figure/table captions are
+v3 reports, and `analysis/v4/` holds one beside `eda-v4.qmd`. **Only the narrative prose and the figure/table captions are
 translated** — every code cell is byte-identical to the English source, so the
 rendered tables, axis labels and legends stay in English and the two language
 versions are directly comparable figure by figure. `pixi run build-ru`
-regenerates the twins from the English sources and normalises their numbers to
-Russian convention; re-run it after editing an English report rather than
-patching a twin by hand.
+regenerates all four twins from the English sources and normalises their numbers
+to Russian convention; re-run it after editing an English report rather than
+patching a twin by hand. A new prose block or caption in an English source must
+be added to that report's `scripts/build_ru_*.py` translation map, or the build
+stops and names what it could not find.

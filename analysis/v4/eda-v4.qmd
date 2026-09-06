@@ -1,0 +1,870 @@
+---
+title: "Arkhangelsk Urban Infrastructure — EDA of the fourth delivery"
+subtitle: "The alcohol and tobacco risk layers, checked against the 2022 study and the FSRAR licence registry"
+author: "Northern State Medical University — Infrastructure project"
+date: today
+lang: en
+format:
+  pdf:
+    pdf-engine: xelatex
+    mainfont: "Arial"
+    monofont: "Consolas"
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    fig-width: 7.2
+    fig-height: 4.4
+    fig-align: center
+    fig-pos: "H"
+    geometry:
+      - margin=2.2cm
+    colorlinks: true
+execute:
+  echo: false
+  warning: false
+  message: false
+jupyter: python3
+---
+
+```{python}
+# | label: setup
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import seaborn as sns
+from IPython.display import Markdown, display
+
+# Locate the repository root, so this report may live at any depth under it.
+_root = next(p for p in [Path.cwd(), *Path.cwd().parents]
+             if (p / "pixi.toml").exists())
+sys.path.insert(0, str(_root / "src"))
+from arkhinfra import v3_common as c  # noqa: E402
+from arkhinfra import v4_common as v4  # noqa: E402
+from arkhinfra import egais as e  # noqa: E402
+from arkhinfra import match_2022 as m  # noqa: E402
+
+mpl.rcParams.update({
+    "font.family": "DejaVu Sans",   # full Cyrillic coverage for figure labels
+    "figure.dpi": 150,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "axes.grid": True,
+    "grid.alpha": 0.25,
+    "axes.titlesize": 12,
+    "axes.titleweight": "bold",
+})
+
+ACCENT, RISK, GREEN, PURPLE = c.ACCENT, c.RISK, c.GREEN, c.PURPLE
+MIXED, OLD = c.MIXED, c.OLD
+INK = "#1f2933"
+
+# One colour per delivery, held fixed across every before/after chart so the
+# reader never has to re-learn the legend.
+SRC_COLORS = {"2022 study": PURPLE, "v3 export": OLD,
+              "v4 layer": RISK, "Licence registry": GREEN}
+# Evidence tier keeps its own fixed pair: the inferred tier is the weaker
+# claim and always takes the muted colour.
+TIER_COLORS = {"Direct": RISK, "Inferred": MIXED}
+
+
+def barh(series, title, xlabel, color=ACCENT, fmt_pct=False, figsize=(7.2, 4.4)):
+    s = series.sort_values(ascending=True)
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.barh(s.index, s.values, color=color)
+    total = s.sum()
+    for y, v in enumerate(s.values):
+        lbl = f"{v:,} ({v / total * 100:.0f}%)" if fmt_pct else f"{v:,}"
+        ax.text(v, y, " " + lbl, va="center", ha="left", fontsize=8, color=INK)
+    ax.set_xlabel(xlabel)
+    ax.set_title(title)
+    ax.margins(x=0.16)
+    ax.grid(axis="y", visible=False)
+    plt.tight_layout()
+    plt.show()
+
+
+def basemap(ax):
+    """CartoDB Positron behind an EPSG:4326 scatter; silent no-op offline."""
+    try:
+        import contextily as ctx
+        tile_cache = c.ROOT / "data" / "tile_cache"
+        tile_cache.mkdir(exist_ok=True)
+        ctx.set_cache_dir(str(tile_cache))
+        ctx.add_basemap(ax, crs="EPSG:4326", source=ctx.providers.CartoDB.Positron,
+                        attribution_size=5)
+        ax.grid(visible=False)
+    except Exception:
+        ax.grid(alpha=0.2)
+```
+
+```{python}
+# | label: load
+tob = v4.load_v4_tobacco()
+alc = v4.load_v4_alcohol()
+both = v4.load_v4()
+sites = v4.sites(both)
+
+v3 = c.load_v3()
+ref = c.load_ref_2022_local()
+
+n_tob, n_alc = len(tob), len(alc)
+n_sites = len(sites)
+
+# The licence registry, restricted the same way reports/egais/eda-egais.pdf
+# restricts it: mainland city rows, licences actually in force.
+eg = e.load_egais()
+eg["okrug_key"], eg["okrug_source"] = e.assign_okrug(eg, v3)
+eg = eg[~eg["off_mainland"]]
+eg_active = eg[eg["is_active"]]
+eg_off = eg_active[eg_active["activity_class"] == e.ACTIVITY_EN["retail"]]
+eg_on = eg_active[eg_active["activity_class"] == e.ACTIVITY_EN["catering"]]
+
+alc_off = alc[alc["trade"] == "off-trade"]
+alc_on = alc[alc["trade"] == "on-trade"]
+
+OKRUG_ORDER = [k for k in v3["okrug_key"].value_counts().index if k != "Unknown"]
+```
+
+# Introduction
+
+The fourth delivery arrived as two CSVs — `…2026-09-03…табачное изделие.csv`
+(`{python} f"{n_tob:,}"` rows) and `…2026-09-04…алкоголь.csv`
+(`{python} f"{n_alc:,}"` rows) — with the contractor's assurance that they carry
+the same schema as the third delivery.
+
+This report asks three questions in order. **Is it the same schema?** **What is
+actually in it?** And **does it hold up against the two benchmarks this project
+can check it with** — the 2022 study, and the FSRAR consolidated licence
+registry profiled in `reports/egais/eda-egais.pdf`.
+
+The short answer to the first is *as a container, yes; as a vocabulary, no, and
+the difference is not cosmetic*. The short answer to the third is that the
+delivery does one important thing very well and one thing not at all.
+
+## Why this delivery exists
+
+`reports/egais/eda-egais.pdf` closed on a specific finding: the commissioned
+exports **undercount alcohol retail roughly fivefold**. The third delivery
+recognised `{python} f"{(v3['category_2022'] == 'Alcohol shops').sum()}"`
+`Alcohol shops` city-wide against
+`{python} f"{len(eg_off)}"` alcohol retail licences in force, and the gap was
+worst in the outlying okrugs — which biased every okrug risk comparison toward
+the centre. The structural reason was that chains sell alcohol under a grocery
+licence and so never appear as an alcohol shop.
+
+This delivery is the answer to that. Its whole content is a judgement about
+which existing objects plausibly sell alcohol or tobacco.
+
+# Part I — Is it the same schema? {#sec-schema}
+
+## The container: identical
+
+```{python}
+# | label: tbl-schema
+# | tbl-cap: "Column schema against the third delivery. Names, order and inferred dtypes all agree."
+same_cols = list(tob.columns[:22]) == list(v3.columns[:22]) == list(alc.columns[:22])
+raw_v3 = pd.read_csv(c.V3_CSV, sep=";", encoding="utf-8-sig", low_memory=False)
+raw_t = pd.read_csv(v4.V4_TOBACCO, sep=";", encoding="utf-8-sig", low_memory=False)
+raw_a = pd.read_csv(v4.V4_ALCOHOL, sep=";", encoding="utf-8-sig", low_memory=False)
+dtype_diffs = {k for k in raw_v3.columns
+               if not (str(raw_v3[k].dtype) == str(raw_t[k].dtype) == str(raw_a[k].dtype))}
+
+Markdown(pd.DataFrame([
+    {"Check": "Column names and order identical to v3",
+     "Result": "yes" if (list(raw_t.columns) == list(raw_v3.columns)
+                         and list(raw_a.columns) == list(raw_v3.columns)) else "no"},
+    {"Check": "Columns with a differing dtype",
+     "Result": f"{len(dtype_diffs)}"},
+    {"Check": "Delimiter / encoding", "Result": "semicolon, UTF-8 with BOM — as v3"},
+    {"Check": "Duplicate rows", "Result": f"{raw_t.duplicated().sum() + raw_a.duplicated().sum()}"},
+    {"Check": "Rows outside Arkhangelsk (city_orig)",
+     "Result": f"{(raw_t['city_orig'] != 'Архангельск').sum() + (raw_a['city_orig'] != 'Архангельск').sum()}"},
+]).to_markdown(index=False))
+```
+
+Anything in this repository that reads the third delivery reads these files
+unchanged. That part of the promise holds, and it is worth saying plainly
+because the previous three deliveries each broke it somewhere.
+
+## The vocabulary: a fourth taxonomy
+
+`category_orig` and `type_orig` share **no value** with any earlier delivery.
+Each file carries exactly one category, and four types between them.
+
+```{python}
+# | label: tbl-vocab
+# | tbl-cap: "The fourth vocabulary. The 'возможная' (possible) types are an inference by the contractor, not an observation."
+vocab = (both.groupby(["risk", "type_en", "evidence", "trade"], observed=True)
+         .size().rename("rows").reset_index()
+         .sort_values(["risk", "rows"], ascending=[True, False]))
+vocab["trade"] = np.where(vocab["risk"] == "Alcohol", vocab["trade"], "—")
+Markdown(vocab.rename(columns={"risk": "Risk", "type_en": "Type (translated)",
+                               "evidence": "Tier", "trade": "Trade",
+                               "rows": "Rows"}).to_markdown(index=False))
+```
+
+## The `возможная` tier is most of the delivery
+
+```{python}
+# | label: fig-tier
+# | fig-cap: "Evidence tier by risk factor. Four rows in five are an inference from the object's type, which the contractor's own comment says still requires checking."
+t = (both.groupby(["risk", "evidence"], observed=True).size().unstack(fill_value=0)
+     [v4.EVIDENCE_ORDER])
+fig, ax = plt.subplots(figsize=(7.2, 3.2))
+left = np.zeros(len(t))
+for col in v4.EVIDENCE_ORDER:
+    ax.barh(t.index, t[col], left=left, color=TIER_COLORS[col], label=col)
+    for y, (v, l) in enumerate(zip(t[col], left)):
+        if v:
+            ax.text(l + v / 2, y, f"{v:,}\n({v / t.loc[t.index[y]].sum() * 100:.0f}%)",
+                    ha="center", va="center", fontsize=8,
+                    color="white" if col == "Direct" else "white")
+    left = left + t[col].to_numpy()
+ax.set_xlabel("Records")
+ax.set_title("Direct evidence against inference")
+ax.grid(axis="y", visible=False)
+ax.legend(loc="lower right", fontsize=8, framealpha=0.9)
+plt.tight_layout()
+plt.show()
+
+inf_share = both["evidence"].eq("Inferred").mean()
+```
+
+`{python} f"{inf_share * 100:.0f}"` % of the delivery is the inferred tier. The
+contractor's `verification_comment` states the limit itself:
+
+> тип объекта подходит, но наличие … продукции **требует отдельной проверки**
+
+These rows say "this is a grocery shop, and grocery shops sell beer and
+cigarettes". That is a reasonable inference — @sec-egais shows it is broadly the
+*right* one — but it is not an observation, and a headline count that merges the
+two tiers is not defensible. Every count below is reported split.
+
+## `recode_2022()` silently drops 93 % of the tobacco file
+
+```{python}
+# | label: tbl-recode
+# | tbl-cap: "The shared 2022 recoder against the fourth vocabulary. The tobacco rule tests for the stem 'табак'; every label in this delivery spells it 'табач-'."
+old_t = c.recode_2022(raw_t).value_counts()
+old_a = c.recode_2022(raw_a).value_counts()
+new_t = tob["category_2022"].value_counts()
+new_a = alc["category_2022"].value_counts()
+cmp = pd.DataFrame({
+    "v3_common.recode_2022 — tobacco": old_t,
+    "v4_common.recode_2022_v4 — tobacco": new_t,
+    "v3_common.recode_2022 — alcohol": old_a,
+    "v4_common.recode_2022_v4 — alcohol": new_a,
+}).fillna(0).astype(int)
+display(Markdown(cmp.to_markdown()))
+
+lost = int(old_t.get("Other (outside 2022 scheme)", 0))
+```
+
+`v3_common.recode_2022()` tests the category/type/name blob for the substring
+**`табак`**. Every label the fourth delivery uses spells the stem **`табач-`**
+(`Табачная и никотинсодержащая продукция`, `Возможная продажа табачной
+продукции`), which does not contain `табак`. The tobacco rule therefore never
+fires, and **`{python} f"{lost}"` of `{python} f"{n_tob}"` rows fall into
+`Other`** — only the rows saying `вейп` or `кальян` survive by another route.
+
+This is the same class of defect as the `GROCERY_TYPES` case mismatch already
+on record, and it fails the same way: silently, with a plausible-looking
+distribution. The alcohol file is unaffected, because `алкогол` does match its
+labels.
+
+The fix is one stem, and it lives in `v4_common.recode_2022_v4()` — kept out of
+`v3_common` on purpose, so the three already-rendered v3 reports keep producing
+the numbers they were signed off on.
+
+# Part II — What the layer contains {#sec-content}
+
+```{python}
+# | label: tbl-shape
+# | tbl-cap: "The two files, and the combined layer. The files overlap: some sites carry both an alcohol and a tobacco row."
+dual_sites = int(both["dual"].sum() / 2)
+Markdown(pd.DataFrame([
+    {"Layer": "Tobacco", "Rows": n_tob, "Direct": int(tob['evidence'].eq('Direct').sum()),
+     "Inferred": int(tob['evidence'].eq('Inferred').sum())},
+    {"Layer": "Alcohol", "Rows": n_alc, "Direct": int(alc['evidence'].eq('Direct').sum()),
+     "Inferred": int(alc['evidence'].eq('Inferred').sum())},
+    {"Layer": "— of which off-trade", "Rows": len(alc_off), "Direct": int(alc_off['evidence'].eq('Direct').sum()),
+     "Inferred": int(alc_off['evidence'].eq('Inferred').sum())},
+    {"Layer": "— of which on-trade", "Rows": len(alc_on), "Direct": int(alc_on['evidence'].eq('Direct').sum()),
+     "Inferred": int(alc_on['evidence'].eq('Inferred').sum())},
+    {"Layer": "Combined, distinct sites", "Rows": n_sites, "Direct": "—", "Inferred": "—"},
+]).to_markdown(index=False))
+```
+
+`{python} f"{dual_sites}"` sites carry **both** an alcohol and a tobacco row, so
+the combined layer is `{python} f"{n_sites:,}"` distinct sites rather than the
+`{python} f"{n_tob + n_alc:,}"` rows the two files sum to —
+`{python} f"{n_sites / len(v3) * 100:.1f}"` % of the third delivery's object
+pool. Anything counting sites must dedupe on the coordinate first.
+
+## Provider mix diverges sharply between the two files
+
+```{python}
+# | label: fig-providers
+# | fig-cap: "Verification status. The tobacco layer is the best-corroborated file the project has received; the alcohol layer is worse than the third delivery it is drawn from."
+mix = pd.DataFrame({
+    "v3 export": v3["verification_status"].value_counts(normalize=True),
+    "v4 tobacco": tob["verification_status"].value_counts(normalize=True),
+    "v4 alcohol": alc["verification_status"].value_counts(normalize=True),
+}).fillna(0).mul(100)
+order = ["confirmed_by_2gis_and_osm", "only_2gis", "only_osm"]
+mix = mix.reindex(order)
+labels = [c.STATUS_EN.get(i, i) for i in mix.index]
+colors = {"v3 export": OLD, "v4 tobacco": ACCENT, "v4 alcohol": RISK}
+
+fig, ax = plt.subplots(figsize=(7.2, 3.6))
+w, x = 0.26, np.arange(len(mix))
+for k, col in enumerate(mix.columns):
+    ax.bar(x + (k - 1) * w, mix[col], w, color=colors[col], label=col)
+    for xi, v in zip(x + (k - 1) * w, mix[col]):
+        ax.text(xi, v, f"{v:.0f}%", ha="center", va="bottom", fontsize=7, color=INK)
+ax.set_xticks(x, labels, fontsize=9)
+ax.set_ylabel("% of records")
+ax.set_title("Which providers found the object")
+ax.grid(axis="x", visible=False)
+ax.legend(fontsize=8, framealpha=0.9)
+plt.tight_layout()
+plt.show()
+
+osm_only_alc = alc["verification_status"].eq("only_osm").mean()
+both_alc = int(alc["verification_status"].eq("confirmed_by_2gis_and_osm").sum())
+```
+
+The two layers were evidently built by different routes. The tobacco file draws
+**`{python} f"{tob['verification_status'].eq('only_2gis').mean() * 100:.0f}"` %**
+of its records from 2GIS and confirms
+`{python} f"{tob['verification_status'].eq('confirmed_by_2gis_and_osm').mean() * 100:.0f}"` %
+with both providers — three times the third delivery's corroboration rate.
+
+The alcohol file is the opposite:
+**`{python} f"{osm_only_alc * 100:.1f}"` % rests on OSM alone**, and only
+`{python} f"{both_alc}"` records are confirmed by both. That is *worse* than the
+third delivery. Whatever the alcohol layer's merits — and @sec-egais finds them
+substantial — its own `verification_status` column does not support calling it
+verified.
+
+## Field completeness
+
+```{python}
+# | label: fig-completeness
+# | fig-cap: "Field completeness. Two columns carried over from the third delivery remain unusable, and the match columns are now more missing than before."
+cols = [x for x in raw_v3.columns]
+comp = pd.DataFrame({
+    "v3 export": raw_v3[cols].notna().mean(),
+    "v4 tobacco": raw_t[cols].notna().mean(),
+    "v4 alcohol": raw_a[cols].notna().mean(),
+}).mul(100)
+comp = comp.loc[comp.min(axis=1) < 99.5].sort_values("v4 alcohol")
+
+fig, ax = plt.subplots(figsize=(7.2, 4.6))
+w, y = 0.26, np.arange(len(comp))
+for k, col in enumerate(comp.columns):
+    ax.barh(y + (k - 1) * w, comp[col], w, color=colors[col], label=col)
+ax.set_yticks(y, comp.index, fontsize=8)
+ax.set_xlabel("% populated")
+ax.set_xlim(0, 108)
+ax.set_title("Columns that are not fully populated")
+ax.grid(axis="y", visible=False)
+ax.legend(fontsize=8, loc="lower right", framealpha=0.9)
+plt.tight_layout()
+plt.show()
+```
+
+Three things to carry forward:
+
+- **`website_check_status` is empty for all `{python} f"{n_tob + n_alc:,}"`
+  rows**, exactly as in the third delivery. The column has never held a value in
+  any delivery.
+- **`opening_date_orig`** is populated for
+  `{python} f"{(raw_t['opening_date_orig'].notna().sum() + raw_a['opening_date_orig'].notna().sum())}"`
+  rows. Opening-date analysis remains impossible.
+- **`match_distance_meters` / `match_name_similarity` got worse.** They are null
+  for `{python} f"{raw_t['match_distance_meters'].isna().mean() * 100:.1f}"` %
+  of tobacco and
+  `{python} f"{raw_a['match_distance_meters'].isna().mean() * 100:.1f}"` % of
+  alcohol rows, against
+  `{python} f"{raw_v3['match_distance_meters'].isna().mean() * 100:.1f}"` % in
+  v3; and where present they still sit at exactly 0 m for
+  `{python} f"{(raw_a['match_distance_meters'] == 0).mean() * 100:.0f}"` % of the
+  alcohol file. They remain a deduplication key, not independent verification.
+
+## `opening_hours_orig` holds two incompatible encodings
+
+```{python}
+# | label: tbl-hours
+# | tbl-cap: "Encoding of opening_hours_orig. One column, two formats, split by which provider supplied the row."
+hrs = pd.concat([
+    v4.hours_frame(tob).assign(layer="v4 tobacco"),
+    v4.hours_frame(alc).assign(layer="v4 alcohol"),
+])
+tab = (hrs.groupby(["layer", "hours_encoding"]).size().unstack(fill_value=0)
+       .rename(columns={"json": "2GIS JSON object", "osm": "OSM opening_hours string",
+                        "none": "empty"})
+       .rename_axis("Layer"))
+Markdown(tab.to_markdown())
+```
+
+2GIS-sourced rows carry a JSON object keyed by weekday; OSM-sourced rows carry
+an OSM `opening_hours` string such as `Mo-Su 08:00-22:00`. A reader that assumes
+either format silently loses the other half. The trap exists in the third
+delivery too — it is simply more visible here, because the tobacco layer's 2GIS
+share is so much higher. `v4_common.parse_hours()` handles both and reports
+which it found.
+
+# Part III — Provenance: this re-tags the third delivery {#sec-provenance}
+
+The files are named like exports and dated four days apart, which invites
+reading them as new fieldwork. They are not.
+
+```{python}
+# | label: tbl-provenance
+# | tbl-cap: "Distance from each fourth-delivery record to the nearest object already in the third delivery."
+rows = []
+for lbl, d in [("v4 tobacco", tob), ("v4 alcohol", alc)]:
+    nn = v4.nearest_v3(d, v3)["v3_distance_m"]
+    hit, tot = v4.source_id_overlap(d, v3)
+    rows.append({
+        "Layer": lbl,
+        "Records": len(d),
+        "Same coordinate": f"{(nn <= 0.5).mean() * 100:.1f} %",
+        "Within 10 m": f"{(nn <= 10).mean() * 100:.1f} %",
+        "Within 100 m": f"{(nn <= 100).mean() * 100:.1f} %",
+        "Source ids in v3": f"{hit}/{tot} ({hit / tot * 100:.0f} %)",
+    })
+Markdown(pd.DataFrame(rows).to_markdown(index=False))
+```
+
+Every tobacco record and all but two alcohol records sit within 100 m of an
+object the third delivery already held, and almost all of their OSM/2GIS source
+ids are ids v3 already cites. **The fourth delivery adds no geographic
+coverage.** What it adds is a classification.
+
+That is not a criticism — it is precisely what was asked for — but it settles
+how the delivery may be described. It cannot be cited as an independent
+enumeration of alcohol or tobacco outlets, because it shares its object pool,
+its providers and its errors with the export it is drawn from.
+
+## What the third delivery had called these objects
+
+```{python}
+# | label: tbl-was
+# | tbl-cap: "The 2022 class of the nearest third-delivery object, within 50 m. The delivery's substance is the promotion of grocery shops and catering into the risk classes."
+out = {}
+for lbl, d in [("Tobacco layer", tob), ("Alcohol layer", alc)]:
+    nn = v4.nearest_v3(d, v3)
+    ok = nn["v3_distance_m"] <= 50
+    out[lbl] = nn.loc[ok, "v3_category_2022"].value_counts()
+was = pd.DataFrame(out).fillna(0).astype(int)
+was = was.reindex([k for k in c.CLASS_ORDER if k in was.index]).rename_axis("v3 class")
+display(Markdown(was.to_markdown()))
+
+med_fp = int(was.loc["Medical"].sum()) if "Medical" in was.index else 0
+```
+
+This is the delivery's whole content in one table. The third delivery's
+`Grocery shops` and `Catering` classes are where the new risk objects come
+from — which is exactly the mechanism `reports/egais/eda-egais.pdf` named for
+the fivefold undercount: chains sell alcohol under a grocery licence, and cafés
+serve it without being bars.
+
+One caveat falls out of the same table. `{python} f"{med_fp}"` records match a
+**medical** object — pharmacies caught by the type rule. They are false
+positives for both risk factors and should be dropped before any risk index is
+built.
+
+# Part IV — Against the 2022 benchmark {#sec-2022}
+
+The 2022 study enumerated `{python} f"{(ref['category_2022'] == 'Alcohol shops').sum()}"`
+alcohol shops and `{python} f"{(ref['category_2022'] == 'Tobacco outlets').sum()}"`
+tobacco outlets across three okrugs. The matcher is the one used in
+`reports/v3/eda-v3-validation.pdf` — 50 m block, rapidfuzz `WRatio` ≥ 0.90 for
+an exact tier, ≥ 0.75 for probable — run here without modification.
+
+```{python}
+# | label: tbl-recall
+# | tbl-cap: "Recall of the 2022 risk objects, in the three okrugs the 2022 study covers. The fourth delivery does not improve on the third."
+O3 = c.OKRUGS_2022
+r3 = ref[ref["okrug_key"].isin(O3)]
+a3 = alc[alc["okrug_key"].isin(O3)]
+t3 = tob[tob["okrug_key"].isin(O3)]
+
+rows = []
+for eclass, targets in [
+    ("Alcohol shops", [("v3 export (all objects)", v3),
+                       ("v3 Alcohol shops only", v3[v3["category_2022"] == "Alcohol shops"]),
+                       ("v4 alcohol layer", alc),
+                       ("v4 alcohol, direct tier", alc[alc["evidence"] == "Direct"])]),
+    ("Tobacco outlets", [("v3 export (all objects)", v3),
+                         ("v3 Tobacco outlets only", v3[v3["category_2022"] == "Tobacco outlets"]),
+                         ("v4 tobacco layer", tob),
+                         ("v4 tobacco, direct tier", tob[tob["evidence"] == "Direct"])]),
+]:
+    etalon = r3[r3["category_2022"] == eclass]
+    for lbl, tgt in targets:
+        r = m.recall(m.match(etalon, tgt))
+        rows.append({"2022 class": eclass, "n": r["n"], "Matched against": lbl,
+                     "Exact": r["exact"], "Probable": r["probable"],
+                     "Same site, other name": r["gps_only"],
+                     "No object <50 m": r["unmatched"],
+                     "Recall": f"{r['recall_pct']:.1f} %"})
+rec = pd.DataFrame(rows)
+display(Markdown(rec.to_markdown(index=False)))
+
+_al = rec[rec["2022 class"] == "Alcohol shops"]
+_tb = rec[rec["2022 class"] == "Tobacco outlets"]
+r_v3_al = _al.iloc[0]["Recall"]; r_v4_al = _al.iloc[2]["Recall"]
+r_v3_tb = _tb.iloc[0]["Recall"]; r_v4_tb = _tb.iloc[2]["Recall"]
+```
+
+Recall of the 2022 alcohol shops moves from `{python} r_v3_al` to
+`{python} r_v4_al`, and tobacco from `{python} r_v3_tb` to `{python} r_v4_tb`.
+**Against the 2022 list the fourth delivery is not an improvement.**
+
+That is less damning than it looks, and the `Same site, other name` column says
+why. Counting objects matched at *any* tier, including a same-site match under a
+different name:
+
+```{python}
+# | label: fig-site
+# | fig-cap: "2022 risk objects with some fourth-delivery object at the same site, split by whether the name also agrees. Most of the shortfall is a rebrand, not an absence."
+fig, ax = plt.subplots(figsize=(7.2, 3.2))
+labels, named, sited = [], [], []
+for eclass, tgt in [("Alcohol shops", alc), ("Tobacco outlets", tob)]:
+    etalon = r3[r3["category_2022"] == eclass]
+    r = m.recall(m.match(etalon, tgt))
+    labels.append(f"2022 {eclass}\n(n={r['n']})")
+    named.append(100 * (r["exact"] + r["probable"]) / r["n"])
+    sited.append(100 * r["gps_only"] / r["n"])
+y = np.arange(len(labels))
+ax.barh(y, named, color=RISK, label="Name agrees")
+ax.barh(y, sited, left=named, color=MIXED, label="Same site, different name")
+for yi, (a_, b_) in enumerate(zip(named, sited)):
+    ax.text(a_ / 2, yi, f"{a_:.0f}%", ha="center", va="center", color="white", fontsize=9)
+    ax.text(a_ + b_ / 2, yi, f"{b_:.0f}%", ha="center", va="center", color="white", fontsize=9)
+    ax.text(a_ + b_, yi, f"  {a_ + b_:.0f}% total", va="center", fontsize=8, color=INK)
+ax.set_yticks(y, labels, fontsize=9)
+ax.set_xlabel("% of the 2022 objects")
+ax.set_xlim(0, 108)
+ax.set_title("Coverage of the 2022 risk objects by the fourth delivery")
+ax.grid(axis="y", visible=False)
+ax.legend(fontsize=8, loc="lower right", framealpha=0.9)
+plt.tight_layout()
+plt.show()
+```
+
+Four years is long enough for a small alcohol shop to change hands and its sign;
+a same-site match under a different name is usually continuity, not error. But
+this cannot be *shown* from the data, only argued, so the honest statement is
+that the fourth delivery neither improves nor degrades agreement with 2022.
+
+```{python}
+# | label: tbl-new
+# | tbl-cap: "The other direction: how much of the fourth delivery in the three 2022 okrugs is new relative to the 2022 list."
+rows = []
+for lbl, tgt, eclass in [("v4 alcohol", a3, "Alcohol shops"),
+                         ("v4 tobacco", t3, "Tobacco outlets")]:
+    etalon = r3[r3["category_2022"] == eclass]
+    lab = m.reverse_coverage(tgt, m.match(etalon, tgt))
+    rows.append({"Layer": lbl, "Rows (3 okrugs)": len(tgt),
+                 "Match a 2022 object": int((lab == "Reproduced from 2022").sum()),
+                 "New": int((lab == "New in v3").sum()),
+                 "% new": f"{(lab == 'New in v3').mean() * 100:.1f} %"})
+Markdown(pd.DataFrame(rows).to_markdown(index=False))
+```
+
+The overwhelming majority of the layer has no 2022 counterpart — because it is
+mostly the inferred tier, and the 2022 study never tried to enumerate ordinary
+shops that happen to sell beer. The 2022 list is therefore the **wrong
+benchmark** for this delivery. The right one is the licence registry.
+
+# Part V — Against the FSRAR licence registry {#sec-egais}
+
+The licence registry is the only genuinely independent check available: a state
+register, compiled for a different purpose, sharing neither providers nor
+method with the contractor. Its limits are those established in
+`reports/egais/eda-egais.pdf` — it holds **alcohol only**, so the tobacco layer
+is untestable here, and it is a *register*, so only rows in force count.
+
+Restricted to mainland city rows in force, it holds
+**`{python} f"{len(eg_off)}"` off-trade** and
+**`{python} f"{len(eg_on)}"` on-trade** retail licences.
+
+## The fivefold gap closes
+
+```{python}
+# | label: fig-headline
+# | fig-cap: "Alcohol availability city-wide, counted four ways. The third delivery's Alcohol shops class sat far below the licence count; the fourth delivery's off-trade layer sits slightly above it."
+_key = (eg_off["outlet_street"].map(e.norm_street) + "|"
+        + eg_off["outlet_house"].astype(str).str.lower().str.strip())
+n_eg_outlets = int(_key.nunique())
+
+head = pd.Series({
+    "v3 export\n'Alcohol shops'": int((v3["category_2022"] == "Alcohol shops").sum()),
+    "Licence registry\ndistinct outlets": n_eg_outlets,
+    "Licence registry\nlicences in force": len(eg_off),
+    "v4 alcohol\noff-trade": len(alc_off),
+})
+cols_ = [OLD, GREEN, GREEN, RISK]
+fig, ax = plt.subplots(figsize=(7.2, 3.8))
+ax.bar(head.index, head.values, color=cols_)
+for xi, v in enumerate(head.values):
+    ax.text(xi, v, f"{v:,}", ha="center", va="bottom", fontsize=10, color=INK)
+ax.set_ylabel("Outlets selling alcohol for off-premises consumption")
+ax.set_title("Off-trade alcohol availability, four counts")
+ax.set_xticks(range(len(head)), head.index, fontsize=8)
+ax.grid(axis="x", visible=False)
+ax.margins(y=0.16)
+plt.tight_layout()
+plt.show()
+
+ratio_v3 = len(eg_off) / max((v3["category_2022"] == "Alcohol shops").sum(), 1)
+ratio_v4 = len(eg_off) / len(alc_off)
+```
+
+The third delivery recognised one alcohol shop for every
+**`{python} f"{ratio_v3:.1f}"`** licences in force. The fourth delivery's
+off-trade layer sits at **`{python} f"{ratio_v4:.2f}"`** — it now names slightly
+*more* outlets than there are licences, which is the expected direction: the
+inferred tier will include shops that sell no alcohol, and one licence can cover
+a chain outlet that the register lists once.
+
+On-trade agrees less well — `{python} f"{len(alc_on)}"` objects against
+`{python} f"{len(eg_on)}"` licences in force — but the on-trade layer is
+`{python} f"{alc_on['evidence'].eq('Inferred').mean() * 100:.0f}"` % inferred
+from "this is a café", and many cafés genuinely serve no alcohol. Treat the
+on-trade count as an upper bound.
+
+## The okrug bias is substantially repaired
+
+This matters more than the city total. The undercount was not uniform: it was
+mildest in the centre and worst in the outlying okrugs, which meant any okrug
+risk comparison built on the third delivery was biased *toward* the centre.
+
+```{python}
+# | label: tbl-okrug-ratio
+# | tbl-cap: "Active off-trade licences per export object, by okrug. A ratio far above 1 means the export missed outlets; the third delivery's spread ran from 2.9 to 12.0."
+okr = pd.DataFrame({
+    "v3 Alcohol shops": v3[v3["category_2022"] == "Alcohol shops"]["okrug_key"].value_counts(),
+    "v4 off-trade": alc_off["okrug_key"].value_counts(),
+    "Licences in force": eg_off["okrug_key"].value_counts(),
+}).reindex(OKRUG_ORDER).fillna(0).astype(int)
+okr["Ratio vs v3"] = okr["Licences in force"] / okr["v3 Alcohol shops"].replace(0, np.nan)
+okr["Ratio vs v4"] = okr["Licences in force"] / okr["v4 off-trade"].replace(0, np.nan)
+_show = okr.copy().rename_axis("Okrug")
+_show["Ratio vs v3"] = _show["Ratio vs v3"].map("{:.1f}".format)
+_show["Ratio vs v4"] = _show["Ratio vs v4"].map("{:.2f}".format)
+display(Markdown(_show.to_markdown(disable_numparse=True)))
+
+sp3 = okr["Ratio vs v3"].max() / okr["Ratio vs v3"].min()
+sp4 = okr["Ratio vs v4"].max() / okr["Ratio vs v4"].min()
+```
+
+```{python}
+# | label: fig-okrug-ratio
+# | fig-cap: "The same ratios, plotted. A perfectly calibrated export would sit on the dashed line at 1.0. The third delivery's error grows with distance from the centre; the fourth delivery's does not."
+o = okr.sort_values("Licences in force", ascending=True)
+fig, ax = plt.subplots(figsize=(7.2, 4.4))
+y = np.arange(len(o))
+ax.scatter(o["Ratio vs v3"], y, s=64, color=OLD, edgecolor="white",
+           zorder=3, label="Licences per v3 'Alcohol shop'")
+ax.scatter(o["Ratio vs v4"], y, s=64, color=RISK, edgecolor="white",
+           zorder=3, label="Licences per v4 off-trade object")
+for yi in y:
+    ax.plot([o["Ratio vs v4"].iloc[yi], o["Ratio vs v3"].iloc[yi]], [yi, yi],
+            color=MIXED, lw=1, alpha=0.5, zorder=2)
+ax.axvline(1.0, color=INK, ls="--", lw=1, zorder=1)
+ax.text(1.0, -0.75, " parity", fontsize=8, color=INK, va="center")
+ax.set_yticks(y, o.index, fontsize=9)
+ax.set_ylim(-1.1, len(o) - 0.3)
+ax.set_xscale("log")
+ax.set_xticks([0.5, 1, 2, 5, 10], ["0.5", "1", "2", "5", "10"])
+ax.set_xlabel("Active off-trade licences per export object (log scale)")
+ax.set_title("Calibration against the licence registry, by okrug")
+ax.grid(axis="y", visible=False)
+ax.legend(fontsize=8, loc="lower right", framealpha=0.9)
+plt.tight_layout()
+plt.show()
+```
+
+The third delivery's ratios spread over a factor of
+**`{python} f"{sp3:.1f}"`** across okrugs — 12 licences per recognised shop in
+Tsiglomensky against 2.9 in Lomonosovsky. The fourth delivery's spread is a
+factor of **`{python} f"{sp4:.1f}"`**, and every okrug sits between
+`{python} f"{okr['Ratio vs v4'].min():.2f}"` and
+`{python} f"{okr['Ratio vs v4'].max():.2f}"`. **Okrug-level alcohol risk
+comparisons become defensible for the first time in this project.**
+
+## Spatial corroboration, both directions
+
+Counts can agree while pointing at different places. This checks the locations.
+
+```{python}
+# | label: tbl-corrob
+# | tbl-cap: "Two-way spatial agreement between the alcohol layer and licensed outlets in force. The reverse direction — licensed outlets the export can see — is the one the fivefold-undercount finding was about."
+corr_v4 = v4.corroboration(alc_off, eg_off)
+corr_v3 = v4.corroboration(v3[v3["category_2022"] == "Alcohol shops"], eg_off)
+tabc = pd.DataFrame({
+    "Radius": [f"{r} m" for r in corr_v4["radius_m"]],
+    "v3 shop near licence": [f"{x} %" for x in corr_v3["v4_near_licence_pct"]],
+    "Licence near v3 shop": [f"{x} %" for x in corr_v3["licence_near_v4_pct"]],
+    "v4 object near licence": [f"{x} %" for x in corr_v4["v4_near_licence_pct"]],
+    "Licence near v4 object": [f"{x} %" for x in corr_v4["licence_near_v4_pct"]],
+})
+display(Markdown(tabc.to_markdown(index=False)))
+
+rev3_50 = corr_v3.set_index("radius_m").loc[50, "licence_near_v4_pct"]
+rev4_50 = corr_v4.set_index("radius_m").loc[50, "licence_near_v4_pct"]
+rev4_100 = corr_v4.set_index("radius_m").loc[100, "licence_near_v4_pct"]
+```
+
+Read the fourth column. The share of licensed outlets in force with a matching
+export object within 50 m rises from **`{python} f"{rev3_50}"` %** under the
+third delivery to **`{python} f"{rev4_50}"` %** under the fourth, and reaches
+`{python} f"{rev4_100}"` % at 100 m. The remaining gap is consistent with the
+registry's own coordinate quality, which
+`reports/egais/eda-egais.pdf` shows is missing for a substantial minority of
+rows and biased toward recently issued licences.
+
+```{python}
+# | label: fig-map
+# | fig-cap: "Licensed off-trade outlets in force (green) against the fourth delivery's off-trade objects (orange), on an OpenStreetMap/CARTO basemap. The two surfaces now cover the same city."
+pts_eg = eg_off.dropna(subset=["latitude", "longitude"])
+fig, ax = plt.subplots(figsize=(7.2, 6.6))
+ax.scatter(alc_off["longitude"], alc_off["latitude"], s=14, alpha=0.65,
+           color=RISK, edgecolor="white", linewidth=0.25,
+           label=f"v4 off-trade object ({len(alc_off):,})")
+ax.scatter(pts_eg["longitude"], pts_eg["latitude"], s=26, alpha=0.85,
+           color=GREEN, edgecolor="white", linewidth=0.4, marker="^",
+           label=f"Licence in force ({len(pts_eg):,})")
+ax.set_xlabel("Longitude")
+ax.set_ylabel("Latitude")
+ax.set_title("The alcohol layer against the licence registry")
+ax.set_aspect(1 / np.cos(np.deg2rad(64.54)))
+basemap(ax)
+ax.legend(loc="upper left", fontsize=8, markerscale=1.4, framealpha=0.9)
+plt.tight_layout()
+plt.show()
+```
+
+# Part VI — The risk surface {#sec-surface}
+
+With the calibration established, the layer can be read as a risk surface.
+
+```{python}
+# | label: fig-okrug-density
+# | fig-cap: "Risk sites per 100 objects in the third delivery's pool, by okrug. The outlying okrugs carry a markedly higher share of risk objects than the centre."
+dens = pd.DataFrame({
+    "risk_sites": sites["okrug_key"].value_counts(),
+    "all_objects": v3["okrug_key"].value_counts(),
+}).reindex(OKRUG_ORDER).fillna(0)
+dens["per_100"] = 100 * dens["risk_sites"] / dens["all_objects"]
+d = dens.sort_values("per_100")
+
+fig, ax = plt.subplots(figsize=(7.2, 4.4))
+ax.barh(d.index, d["per_100"], color=RISK)
+for yi, (v, n_) in enumerate(zip(d["per_100"], d["risk_sites"])):
+    ax.text(v, yi, f"  {v:.1f}  (n={int(n_)})", va="center", fontsize=8, color=INK)
+ax.set_xlabel("Risk sites per 100 objects in the v3 pool")
+ax.set_title("Concentration of alcohol/tobacco sites, by okrug")
+ax.grid(axis="y", visible=False)
+ax.margins(x=0.20)
+plt.tight_layout()
+plt.show()
+```
+
+The gradient runs from the two central okrugs at roughly
+`{python} f"{dens.loc['Lomonosovsky', 'per_100']:.0f}"` risk sites per 100
+objects to Tsiglomensky at
+`{python} f"{dens.loc['Tsiglomensky', 'per_100']:.0f}"`. Read this as
+*composition*, not absolute density: the outlying okrugs have fewer objects of
+every kind, and a larger share of what they do have is a shop that sells beer
+and cigarettes. A per-capita reading would need population by okrug, which no
+delivery has supplied.
+
+```{python}
+# | label: fig-map-risk
+# | fig-cap: "The combined risk layer. Sites carrying both an alcohol and a tobacco row are drawn last, in purple."
+s_al = sites[(sites["risk"] == "Alcohol") & ~sites["dual"]]
+s_tb = sites[(sites["risk"] == "Tobacco") & ~sites["dual"]]
+s_du = sites[sites["dual"]]
+fig, ax = plt.subplots(figsize=(7.2, 6.6))
+for sub, col, lbl in [(s_al, RISK, "Alcohol only"), (s_tb, ACCENT, "Tobacco only"),
+                      (s_du, PURPLE, "Both")]:
+    ax.scatter(sub["longitude"], sub["latitude"], s=14, alpha=0.75,
+               color=col, edgecolor="white", linewidth=0.25,
+               label=f"{lbl} ({len(sub):,})")
+ax.set_xlabel("Longitude")
+ax.set_ylabel("Latitude")
+ax.set_title("Alcohol and tobacco risk sites")
+ax.set_aspect(1 / np.cos(np.deg2rad(64.54)))
+basemap(ax)
+ax.legend(loc="upper left", fontsize=8, markerscale=1.4, framealpha=0.9)
+plt.tight_layout()
+plt.show()
+```
+
+## The tobacco layer has no benchmark
+
+Everything in @sec-egais applies to alcohol only. The licence registry holds
+**no tobacco class at all** — the regulator's remit covers both, the published
+data does not — and the 2022 tobacco list is
+`{python} f"{(ref['category_2022'] == 'Tobacco outlets').sum()}"` objects in
+three okrugs, which @sec-2022 shows the delivery reproduces about a third of by
+name.
+
+So the `{python} f"{n_tob}"`-object tobacco layer rests on the contractor's
+inference and on 2GIS category labels, and **nothing in this repository can
+check it**. Its high 2GIS corroboration rate is a point in its favour and is not
+the same thing as verification. Report tobacco results with that stated.
+
+# Conclusions
+
+**On the schema question.** The contractor's promise holds where it is easy to
+check and fails where it is not. The 22 columns, their order and their types are
+identical to the third delivery, so existing code reads the files unchanged. But
+`category_orig` and `type_orig` carry a fourth vocabulary sharing no value with
+any earlier delivery, and the project's shared `recode_2022()` silently drops
+`{python} f"{lost}"` of `{python} f"{n_tob}"` tobacco rows on it. Schema
+compatibility at the column level is not schema compatibility.
+
+**On what the delivery is.** It is a risk-attribution layer over the third
+delivery, not a fourth survey: every tobacco record and all but two alcohol
+records sit within 100 m of an object v3 already held. Four rows in five are an
+inference from the object's type, which the contractor's own comment says
+requires separate checking. It should be described as a classification of
+existing objects, and its two tiers reported separately.
+
+**On the 2022 benchmark.** No improvement — recall moves from
+`{python} r_v3_al` to `{python} r_v4_al` for alcohol and from
+`{python} r_v3_tb` to `{python} r_v4_tb` for tobacco. Most of the shortfall is
+same-site rebranding rather than absence, but that is an argument, not a
+measurement. The 2022 list is the wrong benchmark for a layer that is mostly
+inferred availability.
+
+**On the licence registry — the finding that matters.** The fivefold alcohol
+undercount closes. Off-trade objects rise from
+`{python} f"{(v3['category_2022'] == 'Alcohol shops').sum()}"` to
+`{python} f"{len(alc_off)}"` against `{python} f"{len(eg_off)}"` licences in
+force; the licences-per-object ratio moves from
+`{python} f"{ratio_v3:.1f}"` to `{python} f"{ratio_v4:.2f}"`; the okrug spread
+narrows from a factor of `{python} f"{sp3:.1f}"` to
+`{python} f"{sp4:.1f}"`; and the share of licensed outlets visible to the export
+within 50 m rises from `{python} f"{rev3_50}"` % to `{python} f"{rev4_50}"` %.
+The centre-bias that made okrug comparisons unusable is substantially repaired.
+
+**What still cannot be done.** The tobacco layer has no independent benchmark of
+any kind. The alcohol layer is
+`{python} f"{osm_only_alc * 100:.1f}"` % OSM-only, so it is well *calibrated*
+without being *verified*. `{python} f"{med_fp}"` pharmacies are false positives
+and must be removed before any index is built. And the five okrugs outside the
+2022 study remain unvalidated against any object-level benchmark — the licence
+registry now covers them for alcohol, which is a real gain, but for tobacco
+they remain dark.

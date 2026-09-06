@@ -10,6 +10,8 @@
 # vendor spreadsheets).  The reports need them: see README, "Obtaining the data".
 /data/raw_v2/
 /data/raw_v3/
+/data/raw_v4/
+/data
 
 # Quarto intermediates
 /.quarto/
