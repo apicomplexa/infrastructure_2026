@@ -1,0 +1,455 @@
+---
+title: "Сверка слоёв риска с реестром лицензий ФСРАР"
+subtitle: "Итоги сопоставления и объекты без лицензии"
+author: "СГМУ — проект по городской инфраструктуре"
+date: today
+lang: ru
+format:
+  pdf:
+    pdf-engine: xelatex
+    mainfont: "Arial"
+    sansfont: "Arial"
+    monofont: "Consolas"
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    fig-width: 7.2
+    fig-height: 4.4
+    fig-align: center
+    fig-pos: "H"
+    geometry:
+      - margin=2.0cm
+    colorlinks: true
+execute:
+  echo: false
+  warning: false
+  message: false
+jupyter: python3
+---
+
+```{python}
+# | label: setup
+import sys
+from pathlib import Path
+
+import pandas as pd
+from IPython.display import Markdown, display
+
+# Locate the repository root, so this report may live at any depth under it.
+_root = next(p for p in [Path.cwd(), *Path.cwd().parents]
+             if (p / "pixi.toml").exists())
+sys.path.insert(0, str(_root / "src"))
+from arkhinfra import v4_common as v4  # noqa: E402
+from arkhinfra import v4_egais as mg  # noqa: E402
+from arkhinfra.egais import load_egais  # noqa: E402
+from arkhinfra.paths import PROC  # noqa: E402
+
+# The join itself is not re-run here: this report reads what
+# `pixi run match-egais-v4` already wrote, so its numbers are by construction
+# the numbers in data/processed/v4_licences_summary.txt.
+MATCHED = PROC / "v4_licences.csv"
+d = pd.read_csv(MATCHED, sep=";", encoding="utf-8-sig", low_memory=False)
+d["licence_evidence"] = d["licence_evidence"].fillna("")
+eg = load_egais()
+
+RISK_RU = {"Alcohol": "Алкоголь", "Tobacco": "Табак"}
+LEV_RU = {"direct": "Прямое", "probable": "Вероятное", "weak": "Слабое",
+          "": "Нет лицензии"}
+METHOD_RU = {"geo": "По координатам", "address": "Только по адресу"}
+LEVEL_RU = {"house": "до дома", "street": "до улицы"}
+STATUS_EG_RU = {"Active": "Действующая", "Expired": "Истёкшая",
+                "Terminated": "Прекращённая", "Reissued": "Переоформленная",
+                "Annulled": "Аннулированная"}
+ACT_RU = {"Retail (off-trade)": "Розница без общепита",
+          "Retail + on-trade": "Розница с общепитом",
+          "Wholesale & storage": "Опт и хранение",
+          "Production": "Производство",
+          "Ethanol transport": "Перевозка спирта"}
+# Short labels for the object classes: the delivery's own wording runs to
+# 45 characters and will not fit a table column beside a name and an address.
+TYPE_SHORT = {
+    v4.A_SHOP: "Магазин",
+    v4.A_CATERING: "Общепит",
+    v4.A_SPECIALISED: "Спец. магазин",
+    v4.A_BAR: "Бар, паб",
+    v4.T_POSSIBLE: "Возможная продажа табака",
+    v4.T_SPECIALISED: "Спец. табачный магазин",
+    v4.T_VAPE: "Вейпы и никотин",
+    v4.T_HOOKAH: "Кальянные",
+}
+OKRUG_ORDER = ["Октябрьский округ", "Ломоносовский округ", "Округ Майская горка",
+               "Соломбальский округ", "Округ Варавино-Фактория",
+               "Исакогорский округ", "Северный округ", "Маймаксанский округ",
+               "Цигломенский округ"]
+
+
+def ru(x, nd=0):
+    """A number in Russian convention: space for thousands, comma for the point."""
+    return f"{x:,.{nd}f}".replace(",", " ").replace(".", ",")
+
+
+def pct(part, whole, nd=1):
+    return ru(100 * part / whole, nd) if whole else "—"
+
+
+def table(df, index=False):
+    display(Markdown(df.to_markdown(index=index, disable_numparse=True)))
+
+
+def clean(s):
+    """Pipe characters would break the markdown table this ends up in."""
+    return s.fillna("").astype(str).str.replace("|", "/", regex=False).str.strip()
+
+
+alc = d[d["risk"] == "Alcohol"]
+tob = d[d["risk"] == "Tobacco"]
+none_alc = alc[alc["licence_status"] == mg.STATUS_NONE]
+none_tob = tob[tob["licence_status"] == mg.STATUS_NONE]
+```
+
+# О чём этот отчёт
+
+Четвёртая поставка (`data/raw_v4/`) размечает объекты городской карты по двум
+факторам риска — алкоголю и табаку. Сводный реестр лицензий ФСРАР
+(снимок от 1 июля 2026 года) даёт независимую проверку этой разметки: для
+каждого объекта выгрузки ищется лицензия по тому же адресу.
+
+Отчёт показывает три вещи:
+
+1. уже посчитанные итоги сопоставления по обоим слоям, в табличном виде;
+2. перечень алкогольных объектов, для которых лицензия по адресу не нашлась;
+3. классы табачных объектов, для которых лицензия по адресу не нашлась.
+
+```{python}
+# | label: method
+rows = [
+    ("Источник разметки", "data/raw_v4 — два CSV, алкоголь и табак"),
+    ("Источник лицензий", "Сводный реестр лицензий ФСРАР, снимок 01.07.2026"),
+    ("Записей в выгрузке", f"{ru(len(d))} ({ru(len(alc))} алкоголь, {ru(len(tob))} табак)"),
+    ("Лицензий по городу", f"{ru(len(eg))}, из них действующих {ru(int(eg['is_active'].sum()))}"),
+    ("Веса пары", f"адрес {ru(mg.W_ADDR, 2)} / название {ru(mg.W_NAME, 2)} / "
+                  f"расстояние {ru(mg.W_DIST, 2)}"),
+    ("Радиус поиска", f"{ru(mg.MAX_M)} м"),
+    ("Порог принятия", f"суммарная оценка ≥ {ru(mg.ACCEPT, 2)}; "
+                       f"отдельно адрес ≥ {ru(mg.ADDR_MIN, 2)}"),
+]
+table(pd.DataFrame(rows, columns=["Параметр", "Значение"]))
+```
+
+Адресный член сравнивает *разобранные топонимы*, а не строки: два источника
+пишут один и тот же вход как «Северной Двины Набережная, 55» и «набережная
+Северной Двины, 55». Второй порог — по одному адресному члену — нужен потому,
+что в радиусе 100 м соседний дом отличается от нужного только номером, а
+координаты реестра округлены и различить их сами по себе не могут.
+
+## Как читать степень доказательности
+
+* **Прямое.** Реестр лицензирует ровно тот товар, которым размечена запись.
+  Только алкогольные записи.
+* **Вероятное.** По адресу действует розничная лицензия на алкоголь, а запись
+  размечена как табачная. Табачного реестра не существует; алкоголь и табак
+  продаются через один прилавок, поэтому это косвенная поддержка разметки, но
+  не её подтверждение.
+* **Слабое.** Совпадение есть, но только с архивной или нерозничной лицензией —
+  вывода о совместной продаже она не даёт.
+* **Нет лицензии.** По адресу объекта в реестре нет ни одной лицензии.
+
+**Столбцы «прямое» и «вероятное» считают разные утверждения — складывать их
+нельзя.** В частности, доля «вероятных» по табаку не является долей
+подтверждённых табачных точек: подтвердить их в этом репозитории нечем.
+
+# Итоги сопоставления
+
+## Общий результат по слоям
+
+```{python}
+# | label: headline
+rows = []
+for key, part in (("Alcohol", alc), ("Tobacco", tob), (None, d)):
+    st = part["licence_status"].value_counts()
+    matched = len(part) - st.get(mg.STATUS_NONE, 0)
+    rows.append({
+        "Слой": RISK_RU.get(key, "Всего"),
+        "Записей": ru(len(part)),
+        "Сопоставлено": f"{ru(matched)} ({pct(matched, len(part))} %)",
+        "Действующая": ru(st.get(mg.STATUS_ACTIVE, 0)),
+        "Архивная": ru(st.get(mg.STATUS_ARCHIVED, 0)),
+        "Нет в реестре": ru(st.get(mg.STATUS_NONE, 0)),
+    })
+table(pd.DataFrame(rows))
+```
+
+Статус здесь — статус *лучшей* лицензии по адресу: «действующая», если по
+этому адресу есть хоть одна лицензия в силе, «архивная», если нашлись только
+истёкшие, прекращённые или аннулированные.
+
+## Что подтверждает найденная лицензия
+
+```{python}
+# | label: evidence
+# Long format on purpose: the wide crosstab has an empty half -- `direct` is
+# alcohol only and `probable` tobacco only -- and printing the empty cells
+# invites exactly the addition the tiers forbid.
+g = pd.crosstab(d["risk"], d["licence_evidence"])
+rows = []
+for risk in g.index:
+    tot = g.loc[risk].sum()
+    for c in ["direct", "probable", "weak", ""]:
+        n = int(g.loc[risk].get(c, 0))
+        if n:
+            rows.append({"Слой": RISK_RU[risk], "Степень": LEV_RU[c],
+                         "Записей": ru(n), "% от слоя": pct(n, tot)})
+table(pd.DataFrame(rows))
+```
+
+## По степени признака и типу торговли
+
+`Прямой` признак — объект помечен как специализированная точка продажи;
+`предполагаемый` — тип объекта лишь совместим с продажей, что сам подрядчик
+в поле `verification_comment` отмечает как «требует отдельной проверки».
+82 % четвёртой поставки — предполагаемый признак, и объединять два тира в один
+заголовочный показатель нельзя.
+
+```{python}
+# | label: tier-trade
+g = (d.groupby(["risk", "evidence", "trade"])["licence_status"]
+     .value_counts().unstack(fill_value=0))
+for c in (mg.STATUS_ACTIVE, mg.STATUS_ARCHIVED, mg.STATUS_NONE):
+    if c not in g.columns:
+        g[c] = 0
+g = g[[mg.STATUS_ACTIVE, mg.STATUS_ARCHIVED, mg.STATUS_NONE]].reset_index()
+g["Всего"] = g[[mg.STATUS_ACTIVE, mg.STATUS_ARCHIVED, mg.STATUS_NONE]].sum(axis=1)
+table(pd.DataFrame({
+    "Слой": g["risk"].map(RISK_RU),
+    "Признак": g["evidence"].map({"Direct": "прямой", "Inferred": "предпол."}),
+    "Торговля": g["trade"].map({"off-trade": "навынос", "on-trade": "общепит"}),
+    "Действ.": [ru(v) for v in g[mg.STATUS_ACTIVE]],
+    "Архивная": [ru(v) for v in g[mg.STATUS_ARCHIVED]],
+    "Нет лицензии": [ru(v) for v in g[mg.STATUS_NONE]],
+    "Всего": [ru(v) for v in g["Всего"]],
+    "% действ.": [pct(a, t) for a, t in zip(g[mg.STATUS_ACTIVE], g["Всего"])],
+}))
+```
+
+## Каким путём найдено совпадение
+
+```{python}
+# | label: route
+m = d[d["licence_status"] != mg.STATUS_NONE]
+g = m.groupby(["licence_match_method", "licence_match_level"]).size().reset_index(name="n")
+table(pd.DataFrame({
+    "Маршрут": g["licence_match_method"].map(METHOD_RU),
+    "Точность адреса": g["licence_match_level"].map(LEVEL_RU),
+    "Записей": [ru(v) for v in g["n"]],
+    "% от сопоставленных": [pct(v, len(m)) for v in g["n"]],
+}))
+```
+
+Маршрут «только по адресу» существует потому, что у 47 % строк реестра нет
+пригодной координаты; для них порог по адресу строже.
+
+## Алкоголь по округам
+
+Только продажа навынос: розничную торговлю и общепит реестр лицензирует
+раздельно, и с числом магазинов сопоставима лишь первая.
+
+```{python}
+# | label: alcohol-okrug
+off = alc[alc["trade"] == "off-trade"]
+g = off.groupby("district_orig")["licence_status"].value_counts().unstack(fill_value=0)
+for c in (mg.STATUS_ACTIVE, mg.STATUS_ARCHIVED, mg.STATUS_NONE):
+    if c not in g.columns:
+        g[c] = 0
+g = g.reindex([o for o in OKRUG_ORDER if o in g.index])
+tot = g.sum(axis=1)
+table(pd.DataFrame({
+    "Округ": g.index,
+    "Действующая": [ru(v) for v in g[mg.STATUS_ACTIVE]],
+    "Архивная": [ru(v) for v in g[mg.STATUS_ARCHIVED]],
+    "Нет лицензии": [ru(v) for v in g[mg.STATUS_NONE]],
+    "Всего": [ru(v) for v in tot],
+    "% без лицензии": [pct(v, t) for v, t in zip(g[mg.STATUS_NONE], tot)],
+}))
+```
+
+## Обратная сторона: какую часть реестра покрывает выгрузка
+
+Строка читается так: из всех городских лицензий данного статуса и вида
+деятельности столько-то имеют объект четвёртой поставки по своему адресу.
+Ключевая строка — действующая розница без общепита.
+
+```{python}
+# | label: reverse
+rc = mg.reverse_coverage(d, eg)
+rc = rc[rc["Licences"] > 0]
+table(pd.DataFrame({
+    "Статус лицензии": rc["status_en"].map(STATUS_EG_RU),
+    "Вид деятельности": rc["activity_class"].map(ACT_RU),
+    "Есть объект": [ru(v) for v in rc["Matched"]],
+    "Лицензий": [ru(v) for v in rc["Licences"]],
+    "% покрыто": [ru(v, 1) for v in rc["% matched"]],
+}))
+```
+
+```{python}
+# | label: reverse-note
+r = rc[(rc["status_en"] == "Active")
+       & (rc["activity_class"] == "Retail (off-trade)")].iloc[0]
+display(Markdown(
+    f"Из **{ru(r['Licences'])}** действующих розничных лицензий без общепита "
+    f"объект четвёртой поставки стоит по адресу **{ru(r['Matched'])}** "
+    f"({ru(r['% matched'], 1)} %). Это и есть ответ на вопрос о пятикратном "
+    "недоучёте алкоголя в третьей поставке: четвёртая поставка лицензированную "
+    "розницу учитывает."))
+```
+
+# Алкоголь: объекты без лицензии
+
+```{python}
+# | label: alcohol-none-lead
+display(Markdown(
+    f"Лицензии по адресу нет у **{ru(len(none_alc))}** из {ru(len(alc))} "
+    f"алкогольных записей ({pct(len(none_alc), len(alc))} %). "
+    "Полный перечень — ниже, по округам."))
+```
+
+Отсутствие лицензии по адресу означает одно из трёх: объект действительно не
+торгует алкоголем и разметка ошибочна; лицензия есть, но записана по другому
+адресу (например, юридическому, а не адресу точки); объект — общепит,
+работающий без собственной лицензии. Разделить эти случаи средствами
+репозитория нельзя, поэтому перечень ниже — список кандидатов на ручную
+проверку, а не список доказанных ошибок.
+
+## Сводка по классам объектов
+
+```{python}
+# | label: alcohol-none-types
+g = alc.groupby("type_orig")["licence_status"].value_counts().unstack(fill_value=0)
+if mg.STATUS_NONE not in g.columns:
+    g[mg.STATUS_NONE] = 0
+g = g.assign(_n=g[mg.STATUS_NONE], _t=g.sum(axis=1)).sort_values("_n", ascending=False)
+table(pd.DataFrame({
+    "Класс объекта": [TYPE_SHORT.get(i, i) for i in g.index],
+    "Признак": ["предпол." if i in v4.INFERRED_TYPES else "прямой" for i in g.index],
+    "Торговля": ["общепит" if i in v4.ON_TRADE_TYPES else "навынос" for i in g.index],
+    "Всего": [ru(v) for v in g["_t"]],
+    "Без лицензии": [ru(v) for v in g["_n"]],
+    "% без лицензии": [pct(v, t) for v, t in zip(g["_n"], g["_t"])],
+}))
+```
+
+## Перечень объектов
+
+Адреса даны без повторяющегося «Архангельск,». Класс объекта задаёт и степень
+признака: «спец. магазин» и «бар, паб» — прямой признак, «магазин» и «общепит» —
+предполагаемый, то есть тип объекта лишь совместим с продажей алкоголя.
+
+```{python}
+# | label: alcohol-none-list
+# | output: asis
+lst = none_alc.copy()
+lst["Название"] = clean(lst["name_orig"])
+lst["Адрес"] = clean(lst["adress_orig"]).str.replace(r"^Архангельск,\s*", "", regex=True)
+lst["Класс объекта"] = lst["type_orig"].map(lambda v: TYPE_SHORT.get(v, v))
+for okrug in [o for o in OKRUG_ORDER if o in set(lst["district_orig"])]:
+    part = lst[lst["district_orig"] == okrug].sort_values(["Название", "Адрес"])
+    print(f"\n### {okrug} — {ru(len(part))}\n")
+    print(part[["Название", "Адрес", "Класс объекта"]]
+          .to_markdown(index=False, disable_numparse=True))
+    print()
+```
+
+# Табак: классы объектов без лицензии
+
+```{python}
+# | label: tobacco-lead
+n_prob = int((tob["licence_evidence"] == "probable").sum())
+n_weak = int((tob["licence_evidence"] == "weak").sum())
+display(Markdown(
+    "В реестре ФСРАР **нет табачного класса** — он ведёт только алкогольные "
+    "лицензии. Табачная запись попадает в него единственным способом: через "
+    "алкогольную лицензию по своему же адресу. Поэтому здесь нет ни одной "
+    f"«подтверждённой» табачной точки: {ru(n_prob)} записей имеют "
+    f"*вероятную* поддержку, {ru(n_weak)} — слабую, а у **{ru(len(none_tob))}** "
+    f"из {ru(len(tob))} ({pct(len(none_tob), len(tob))} %) по адресу нет "
+    "никакой лицензии."))
+```
+
+## По классам объектов
+
+```{python}
+# | label: tobacco-classes
+g = tob.groupby("type_orig")["licence_evidence"].value_counts().unstack(fill_value=0)
+for c in ("probable", "weak", ""):
+    if c not in g.columns:
+        g[c] = 0
+g = g.assign(_t=g.sum(axis=1)).sort_values("_t", ascending=False)
+table(pd.DataFrame({
+    "Класс объекта": [TYPE_SHORT.get(i, i) for i in g.index],
+    "Признак": ["предпол." if i in v4.INFERRED_TYPES else "прямой" for i in g.index],
+    "Всего": [ru(v) for v in g["_t"]],
+    "Вероятное": [ru(v) for v in g["probable"]],
+    "Слабое": [ru(v) for v in g["weak"]],
+    "Нет лицензии": [ru(v) for v in g[""]],
+    "% без лицензии": [pct(v, t) for v, t in zip(g[""], g["_t"])],
+}))
+```
+
+Класс «возможная продажа табака» — это 82 % всей табачной поставки и
+одновременно почти весь её провал по лицензиям: разметка здесь опирается на
+совместимость типа объекта с продажей, а не на наблюдение. Специализированные
+табачные магазины ведут себя иначе — доля адресов без алкогольной лицензии у
+них заметно ниже, что для этого класса ожидаемо. Кальянные выпадают из общей
+картины по обратной причине: алкогольная лицензия для них не нужна, поэтому
+её отсутствие ничего не говорит о продаже табака.
+
+## Без лицензии — по классам и округам
+
+Столбец «% округа» — доля табачных записей округа, оставшихся без какой-либо
+лицензии по адресу.
+
+```{python}
+# | label: tobacco-classes-okrug
+SHORT = {v4.T_POSSIBLE: "Возможная продажа", v4.T_SPECIALISED: "Спец. магазин",
+         v4.T_VAPE: "Вейпы", v4.T_HOOKAH: "Кальянные"}
+g = pd.crosstab(none_tob["district_orig"], none_tob["type_orig"])
+for c in SHORT:
+    if c not in g.columns:
+        g[c] = 0
+g = (g[list(SHORT)].reindex([o for o in OKRUG_ORDER if o in g.index])
+     .fillna(0).astype(int))
+tot_tob = tob.groupby("district_orig").size()
+out = pd.DataFrame({"Округ": g.index})
+for c, label in SHORT.items():
+    out[label] = [ru(v) for v in g[c]]
+out["Всего"] = [ru(v) for v in g.sum(axis=1)]
+out["% округа"] = [pct(v, tot_tob.get(o, 0))
+                   for o, v in zip(g.index, g.sum(axis=1))]
+table(out)
+```
+
+# Что из этого следует
+
+```{python}
+# | label: conclusions
+n_off = int((alc["trade"] == "off-trade").sum())
+n_off_none = int(((alc["trade"] == "off-trade")
+                  & (alc["licence_status"] == mg.STATUS_NONE)).sum())
+cov = rc[(rc["status_en"] == "Active")
+         & (rc["activity_class"] == "Retail (off-trade)")]["% matched"].iloc[0]
+display(Markdown("\n".join([
+    f"* **Алкоголь проверяем, и проверку проходит.** {pct(len(alc) - len(none_alc), len(alc))} % "
+    "записей имеют лицензию по адресу, а с обратной стороны выгрузка покрывает "
+    f"{ru(cov, 1)} % действующих розничных лицензий без общепита.",
+    f"* **Без лицензии остаются {ru(len(none_alc))} алкогольных объектов**, из них "
+    f"{ru(n_off_none)} — магазины (при {ru(n_off)} записях о продаже навынос). "
+    "Это кандидаты на ручную проверку, а не доказанные ошибки разметки.",
+    "* **Табачный слой ничем в этом репозитории не проверяется.** Реестр ведёт "
+    "алкоголь; совпадение по адресу говорит лишь о том, что по этому адресу "
+    "легально торгуют алкоголем. Долю «вероятных» нельзя публиковать как долю "
+    "подтверждённых табачных точек.",
+    f"* **{ru(len(none_tob))} табачных записей не имеют по адресу даже алкогольной "
+    "лицензии**, и почти все они — класс «возможная продажа табака», самый "
+    "слабый в поставке. Внешней проверки для него не существует вовсе.",
+])))
+```
