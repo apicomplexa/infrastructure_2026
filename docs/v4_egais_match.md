@@ -5,11 +5,23 @@ fourth delivery (1,694 rows, both risk layers) with the licence answer appended
 to every record: is there a real alcohol licence at this address, is it in
 force, which one, and whose.
 
-The code is `src/arkhinfra/v4_egais.py`; the runner is
-`scripts/match_egais_v4.py`. Nothing here changes `v4_common.py`, `egais.py` or
+**The matching rule itself is `packages/licmatch`** — a standalone package that
+knows nothing about this study: toponym parsing, the three-term score, the two
+floors, the two routes, selection and the distinct-key tallies. Its methodology
+write-up is `packages/licmatch/docs/METHODOLOGY.md` (in Russian) and its tests
+run with `pixi run licmatch-test`. What stays in `src/arkhinfra/v4_egais.py` is
+this study's half: the two adapters, the licence columns, the evidence tiers and
+the summary tables. The runner is `scripts/match_egais_v4.py`.
+
+The split changed no number: the three files the runner writes are byte-identical
+to the ones it wrote before. Nothing here changes `v4_common.py`, `egais.py` or
 any rendered report — `v4_common.corroboration()` still answers the aggregate
 question (what share of the layer sits near *some* licensed outlet) and stops at
 a nearest-neighbour distance.
+
+The sections below describe the join as it is *used* here; for why each number
+is what it is, and for what may not be claimed on this result, read the
+methodology document.
 
 ## The score
 

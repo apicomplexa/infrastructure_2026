@@ -68,7 +68,13 @@ presentations.
 │   ├── match_2022.py            # independent 2022 <-> 2026 record matcher
 │   ├── basecheck.py             # export_base matcher (stricter normalisers)
 │   ├── egais.py                 # FSRAR licence-registry loader and okrug recovery
-│   └── v4_common.py             # fourth-delivery loaders, tiers, corrected recoder
+│   ├── v4_common.py             # fourth-delivery loaders, tiers, corrected recoder
+│   ├── v4_egais.py              # adapter: the v4 export and the registry -> licmatch
+│   └── taxonomy_2022.py         # the seven independent 2022-class flags
+├── packages/licmatch/           # standalone record-linkage package (own tests & docs)
+│   ├── src/licmatch/            # toponyms, the three-term score, selection
+│   ├── docs/METHODOLOGY.md      # why each weight, floor and route is what it is (RU)
+│   └── tests/                   # 48 unit tests — `pixi run licmatch-test`
 ├── scripts/                     # runnable entry points
 │   ├── profile_data.py          # quick dataset profile
 │   ├── match_2022.py            # CLI launcher for arkhinfra.match_2022
@@ -76,6 +82,7 @@ presentations.
 │   ├── build_ru_basecheck.py    # regenerate the Russian twin of the basecheck report
 │   ├── build_ru_v4.py           # regenerate the Russian twin of eda-v4.qmd
 │   ├── parse_egais.py           # stream the FSRAR registry XML -> processed TSV
+│   ├── match_egais_v4.py        # join the v4 export to the licence registry
 │   └── ru_numfmt.py             # Russian number conventions in the twins
 ├── pixi.toml                    # environment & tasks (pixi / conda-forge)
 └── pixi.lock

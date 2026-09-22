@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "licmatch"
+version = "1.0.0"
+description = "Address-level record linkage between an object export and a licence register (Russian addresses)"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "apicomplexa", email = "aleksadr.kulish@gmail.com" }]
+keywords = ["record-linkage", "toponym", "address-matching", "russian", "egais"]
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.0",
+    "rapidfuzz>=3.9",
+]
+
+[project.urls]
+Documentation = "docs/METHODOLOGY.md"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/licmatch"]

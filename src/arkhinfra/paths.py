@@ -55,3 +55,26 @@ V4_ALCOHOL = RAW4 / "infrastructure_архангельск_2026-09-04_quality_ex
 RAW_EGAIS = DATA / "raw_alter_egais"
 EGAIS_XML = RAW_EGAIS / "data-20260701t0000-structure-20190918t0000.xml"
 EGAIS_TSV = PROC / "egais_licences_arkhangelsk.tsv"
+
+# Vendored packages that are not part of `arkhinfra` and must stay liftable out
+# of this repository.  `packages/licmatch` is the address-level record-linkage
+# rule; reports and scripts reach it through `ensure_licmatch_path()` rather
+# than through a changed bootstrap, because every report's setup cell is kept
+# byte-identical on purpose.
+PACKAGES = ROOT / "packages"
+LICMATCH_SRC = PACKAGES / "licmatch" / "src"
+
+
+def ensure_licmatch_path() -> Path:
+    """Put the vendored `licmatch` package on sys.path, once.
+
+    A no-op where the package is installed into the environment instead (see
+    packages/licmatch/README.md): an installed copy already imports, and this
+    only ever appends a path, never shadows one.
+    """
+    import sys
+
+    p = str(LICMATCH_SRC)
+    if LICMATCH_SRC.is_dir() and p not in sys.path:
+        sys.path.append(p)
+    return LICMATCH_SRC

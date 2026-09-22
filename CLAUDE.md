@@ -19,7 +19,14 @@ report trees are split again by *delivery*:
   `--output-dir`. **Git-ignored**: they are deliverables, rebuilt on demand.
   Never hand-edit anything here, and do not add them to the index.
 - `src/arkhinfra/` — the importable **library**: `paths.py`, `v3_common.py`,
-  `basecheck.py`, `match_2022.py`, `egais.py`, `v4_common.py`, `v4_egais.py`.
+  `basecheck.py`, `match_2022.py`, `egais.py`, `v4_common.py`, `v4_egais.py`,
+  `taxonomy_2022.py`.
+- `packages/licmatch/` — a **standalone package**, not part of `arkhinfra`: the
+  address-level record-linkage rule (toponyms, the three-term score, the two
+  floors, selection), with its own `pyproject.toml`, tests and methodology
+  write-up. It knows nothing about this study; `arkhinfra.v4_egais` adapts the
+  two sources to it. Reach it with `arkhinfra.paths.ensure_licmatch_path()`,
+  never by changing a report's setup-cell bootstrap.
 - `scripts/` — **runnable** entry points only. `scripts/match_2022.py` is a thin
   launcher around `arkhinfra.match_2022`, which is a library module because a
   report imports it.
@@ -55,6 +62,10 @@ always run tools through pixi:
   threshold ladder
 - `pixi run eda-v4` / `eda-v4-ru` — render the fourth-delivery risk-layer report
   → `reports/v4/eda-v4.pdf` (and its Russian twin)
+- `pixi run build-taxonomy` — re-cut the v3 export into seven independent 2022
+  classes → `data/processed/taxonomy_2022.csv` (+ `_summary.txt`)
+- `pixi run licmatch-test` — run the 48 unit tests of the record-linkage package
+  (stdlib unittest; no data needed)
 - `pixi run profile` — quick dataset profile
 
 The EDA is parameterised (`dataset: enriched | health`, a `parameters`-tagged
@@ -285,7 +296,13 @@ Two things about this source govern how it may be used:
 
 `src/arkhinfra/v4_egais.py` (`pixi run match-egais-v4`) answers the object-level
 question `v4_common.corroboration()` deliberately stops short of: *which* licence
-sits at this object's address, and is it in force. It writes
+sits at this object's address, and is it in force. **The rule that does the
+matching lives in `packages/licmatch/`**, a standalone package with no knowledge
+of this study — `v4_egais.py` is its adapter: two `prepare_*()` functions, the
+licence columns, the evidence tiers and the summary tables. Change the rule
+there and re-run `pixi run licmatch-test`; change what a match *means* here.
+The methodology (weights, both floors, both routes, the calibration and the
+forbidden readings) is `packages/licmatch/docs/METHODOLOGY.md`. It writes
 `data/processed/v4_licences.csv` — the whole v4 export plus `licence_status`
 (`Active` / `Archived` / `Not in registry`), the chosen licence's number, dates,
 activity class, holder and INN, the three score components, and the count of
@@ -336,6 +353,84 @@ The published **XSD does not describe the published file** — it declares
 elements, and names differ (the registry's own `выезного` typo included). A
 parser written from the documentation returns nothing.
 
+## The 2022 taxonomy re-cut (`taxonomy_2022`)
+
+**A rule, not a model** — no probabilities, no training, nothing to calibrate.
+`v3_common.recode_2022()` asks "which *one* 2022 class is this?" and resolves it
+through `np.select`, whose priority order discards every further class. The 2022
+commission asks "which of the seven lists would this object appear on", so
+`src/arkhinfra/taxonomy_2022.py` emits **seven independent booleans** over the
+7,263-row v3 export plus, for each, an `evidence` column naming the field that
+carried the object in (`category` / `type` / `name`). The three are **ranked**:
+where `category_orig` exactly names one of the seven classes, that assertion
+outranks anything inferred from `type_orig` or the fascia, and a `type`- or
+`name`-level flag for a *different* class is suppressed.
+
+- `pixi run build-taxonomy` → `data/processed/taxonomy_2022.csv` (7,263 × 40)
+  and `taxonomy_2022_summary.txt`. Read the summary for numbers; do not quote
+  them from anywhere else.
+- `docs/taxonomy_2022_notes.md` — the field-level write-up.
+  `docs/classifier_design.md` §10 is the analysis it implements.
+- Kept **separate from `v3_common.py`** on the same principle as `basecheck.py`,
+  `egais.py` and `v4_common.py`. What is shared is imported, never copied. **Do
+  not merge the two rules**, and do not port these fixes into `v3_common`.
+
+Three defects, all found on the 84 % of the export that no evaluation in the
+design document reaches. Each moves published numbers city-wide:
+
+- **D1 — `Овощи и фрукты` → `Other`, 51 objects.** `GROCERY_TYPES` holds the 2022
+  spelling `фрукты-овощи` and `Series.isin` is exact. Fixed generally, by a
+  word-bag type key (`norm_type` / `_type_key`), not by adding the one string.
+- **D2 — ~30 % of `Sport` was not a sport facility.** The old rule searches a blob
+  *including* `category_orig` for the stem `спорт`, so the category `Досуг и
+  спорт` carried **63 saunas** in (the 2022 benchmark labels a sauna `Общепит`);
+  plain substring search also took 8 passport offices (па-*спорт*-ный) and
+  5 haulage firms (тран-*спорт*-ная). Now stems match on word boundaries over
+  `type_orig` / `name_orig` only, categories match exactly, and sport retail
+  (20 objects) has its own flag `is_sport_retail` — a shop is not a facility.
+- **D3 — 35 rows of the export carry the wrong `type_orig`.** They pair
+  `category_orig = Точки продажи табака` with `type_orig = Продуктовый магазин`,
+  and their names settle it — *Азбука дыма*, *SmokeArh, табачная лавка*, *Дымный
+  папа*, *Kiss My Vape*, *Oblako, магазин дымной продукции*. They are tobacco and
+  vape shops, never groceries. **This is not a defect in the recoder** — the old
+  rule's priority order returned the right answer for them *by accident*, which is
+  what kept the defect hidden; the seven flags exposed it, and the evidence
+  hierarchy then keeps them out of Grocery. Read §10.3 of
+  `docs/classifier_design.md`, not the earlier "35 invisible grocery shops"
+  reading, which is withdrawn.
+
+Effect: **Sport 358 → 255**, **Grocery shops 811 → 867**, Medical 677 → 671,
+Catering 625 → 633, Industrial 25 → 28, Alcohol 110 → 109, Tobacco unchanged at
+60, no class 4,597 → 4,647. Only 7 objects carry two classes (none carries
+three). **The three rendered v3 reports still carry the old rule's numbers, and
+that is deliberate — do not re-render them silently.** Sport and Grocery are
+reported per okrug there; both move.
+
+Two rules for using the output:
+
+- **Never sum evidence kinds into one headline.** `category` means the export
+  itself says so, `type` that the object's kind implies it, `name` that only the
+  fascia string suggests it. Grocery is 867/867 `type`, Tobacco 60/60 `category`,
+  **Industrial 28/28 `name`**. `name` evidence is a hypothesis and belongs in the
+  review queue.
+- **The export encodes essentially no co-membership.** Its own fields put two 2022
+  classes on **2 objects out of 7,263** (*Ларец, магазин-бистро* and *Бонус,
+  магазин-кафе*); the other five duals are a grocery wrongly flagged Industrial
+  off a fascia match on *мясокомбинат* / *Хладокомбинат*. Nothing in
+  `category_orig`, `type_orig` or `name_orig` states that a grocery sells tobacco
+  — only `data/raw_v4/` and the licence registry do, and they imply ~560 such
+  sites. A multi-label deliverable is unreachable from this input.
+
+`assert_no_missed_types()` fails the build if a `type_orig` carrying an
+in-taxonomy stem lands in no class — the guard against a fourth member of the D1
+family. It currently passes. When it fires, either the class definition has a
+spelling hole or the type needs an entry in `GUARD_EXEMPT_TYPES` **with a
+reason**; never trim `AUDIT_STEMS`.
+
+Validation covers **15.6 % of the city** (1,133 linked benchmark rows) at its
+easy end — accuracy 0.925 on `exact` links against 0.700 on `probable` ones.
+Any per-class accuracy table must say so.
+
 ## Known data caveats
 
 - District (`district_orig`) assignment in the **first** export is skewed — ~71%
@@ -364,8 +459,20 @@ parser written from the documentation returns nothing.
   first, and 392 of the 1,753 records in the 2022 benchmark (22%). Any published
   `Other` count from the first- or second-delivery reports is inflated. Port the
   fix before re-rendering those reports, and keep all three copies in sync.
-- The `Industrial` class is **dominated by name-substring false positives** (25
-  objects, including a hostel and a jewellery shop). Do not report it per okrug.
+- **`recode_2022()` fails a third way, on the third delivery's own vocabulary** —
+  `GROCERY_TYPES` holds the 2022 spelling `фрукты-овощи`, the 2026 export writes
+  `Овощи и фрукты`, and `Series.isin` is exact equality, so **51 greengrocers
+  fall through to `Other`**. Same family as the two caveats above (a closed list
+  of literal strings against a vocabulary nobody controls). Fixed in
+  `src/arkhinfra/taxonomy_2022.py` only — generally, via a word-bag type key, and
+  guarded by `assert_no_missed_types()`.
+- The `Industrial` class is **nothing but a string search over shop signs** — in
+  `taxonomy_2022` all **28** objects carry `industrial_evidence = "name"`, and
+  the list holds a hostel called *ТЭЦ*, a jeweller (*Московский ювелирный
+  завод*), a photo shop and a cake shop called *Фабрика* / *Фабрика тортов*, and
+  three ferry terminals named after sawmills. (The old rule's count is 25; the
+  `завод`/`фабрика`/`комбинат` infix stems add 3 more of the same kind.) Do not
+  report it per okrug.
 - **The ARKTMED panel is no longer synthetic.** The second-delivery panel had
   27 of 27 testable series exactly linear in time (R² ≥ 0.999); the third has
   **0 of 11**, median R² 0.43, and cites named Rosstat files rather than portal

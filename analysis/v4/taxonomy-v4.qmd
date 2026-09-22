@@ -1,0 +1,483 @@
+---
+title: "Arkhangelsk Urban Infrastructure — the 2022 taxonomy as seven lists"
+subtitle: "A corrected multi-label rule over the city-wide export, and an honest account of what validates it"
+author: "Northern State Medical University — Infrastructure project"
+date: today
+lang: en
+format:
+  pdf:
+    pdf-engine: xelatex
+    mainfont: "Arial"
+    monofont: "Consolas"
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    fig-width: 7.2
+    fig-height: 4.4
+    fig-align: center
+    fig-pos: "H"
+    geometry:
+      - margin=2.2cm
+    colorlinks: true
+execute:
+  echo: false
+  warning: false
+  message: false
+jupyter: python3
+---
+
+```{python}
+# | label: setup
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import seaborn as sns
+from IPython.display import Markdown, display
+
+# Locate the repository root, so this report may live at any depth under it.
+_root = next(p for p in [Path.cwd(), *Path.cwd().parents]
+             if (p / "pixi.toml").exists())
+sys.path.insert(0, str(_root / "src"))
+from arkhinfra import v3_common as c  # noqa: E402
+from arkhinfra import taxonomy_2022 as tx  # noqa: E402
+from arkhinfra.paths import PROC  # noqa: E402
+
+mpl.rcParams.update({
+    "font.family": "DejaVu Sans",   # full Cyrillic coverage for figure labels
+    "figure.dpi": 150,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "axes.grid": True,
+    "grid.alpha": 0.25,
+    "axes.titlesize": 12,
+    "axes.titleweight": "bold",
+})
+
+ACCENT, RISK, GREEN, PURPLE = c.ACCENT, c.RISK, c.GREEN, c.PURPLE
+MIXED, OLD = c.MIXED, c.OLD
+INK = "#1f2933"
+
+# Evidence keeps one fixed colour each, everywhere in the report: the further
+# from `category`, the weaker the claim and the more muted the colour.
+EV_COLORS = {"category": ACCENT, "type": GREEN, "name": RISK}
+EV_LABEL = {"category": "category — the export says so",
+            "type": "type — the object's kind implies it",
+            "name": "name — only the fascia suggests it"}
+
+d = tx.load_export()
+old = c.recode_2022(d)
+N = len(d)
+
+CLS = tx.CLASSES
+EN = tx.CLASS_EN
+
+
+def counts_new():
+    return pd.Series({EN[k]: int(d["is_" + k].sum()) for k in CLS})
+
+
+def counts_old():
+    return pd.Series({EN[k]: int((old == EN[k]).sum()) for k in CLS})
+
+
+def show(df, **kw):
+    display(Markdown(df.to_markdown(**kw)))
+```
+
+# What this report is
+
+The 2022 study recorded seven lists of objects — medical organisations, sport
+facilities, shops, catering, specialised alcohol shops, tobacco outlets and
+industrial objects. Every report in this repository so far has asked of a 2026
+object *which one of the seven is it*, and answered with
+`v3_common.recode_2022()`, which resolves seven predicates through a priority
+order and keeps the first.
+
+That is the wrong question. An object can sit on several of the lists at once, a
+grocery that sells tobacco being the ordinary case, and a priority order does not
+express that — it silently discards every class after the first. This report
+replaces the single answer with **seven independent booleans**, one per list,
+and attaches to each the *evidence* that put the object there.
+
+It is deliberately not a model. The companion document
+`docs/classifier_design.md` sets out why a learned classifier over this taxonomy
+cannot be built in the shape it was commissioned: the labelled rows are almost
+entirely rows a free rule already gets right, the negative set holds more true
+positives than the positive set for the classes that matter, and — decisively —
+the export's fields do not encode co-membership at all, so no amount of
+labelling, model class or calibration reaches the seven-probability deliverable.
+Section 10 of that document is the analysis this report implements.
+
+::: {.callout-important}
+## Scope of the validation, stated once and up front
+
+The rule below is checked against the 2022 benchmark on **1,133 of 7,263
+objects — 15.6 % of the city**, in three of nine okrugs, and accuracy on that
+slice tracks how easily an object could be linked across four years. The
+remaining 84 % is unvalidated by anything. Every number in §5 carries that
+qualification; no number in this report is a city-wide accuracy guarantee.
+:::
+
+# Four defects, found where nobody was looking
+
+All four sat on the 84 % of the export that no evaluation reaches, which is why
+four deliveries of reports did not surface them. Three are spelling holes in a
+class vocabulary and one is a defect in the export itself.
+
+## D1 — fifty-one greengrocers outside the taxonomy
+
+`GROCERY_TYPES` holds the 2022 spelling `фрукты-овощи`. The 2026 export writes
+the same two words in the other order, `Овощи и фрукты`, and the membership test
+is exact string equality, so 51 objects fell through to *outside the 2022
+scheme*.
+
+This is the third member of a family the repository already documents: the
+`GROCERY_TYPES` case mismatch that emptied the grocery class in the v1 and v2
+reports, and the tobacco rule testing for `табак` while the fourth delivery
+spells the stem `табач-`. Rather than add one more string, types are now matched
+on their **bag of significant words**, so word order, separator, case and ё/е
+stop mattering — and `assert_no_missed_types()` fails the build if any
+unclassified type still carries an in-taxonomy stem, so there is no fourth
+member.
+
+## D2 — a third of the sport class was not a sport facility
+
+```{python}
+# | label: tbl-d2
+old_sport = d[old == "Sport"]
+lost = old_sport[~old_sport.index.isin(d.index[d.is_sport])]
+t = (lost.type_orig.fillna("(none)").value_counts()
+     .rename_axis("type_orig").rename("objects").to_frame())
+show(t)
+```
+
+The old rule searches a blob that **includes `category_orig`** for the stem
+`спорт`. The export's category `Досуг и спорт` therefore carried every sauna in
+the city into the sport class — 63 objects, where the 2022 benchmark itself
+labels a sauna `Общепит`. Plain substring search did the rest: `спорт` is inside
+*па·спорт·ный стол* (nine passport offices) and *тран·спорт·ная компания* (seven
+haulage firms), and `бар` is inside *лом·бар·д*.
+
+Three changes: stems are matched on word boundaries; they are matched on
+`type_orig` and `name_orig` only, never on `category_orig`; and sport retail
+(`Спортивный магазин`, 20 objects) gets its own flag, because a shop that sells
+football boots is not a place anyone exercises.
+
+`Sport` is reported per okrug in the accessibility maps. It was overstated by
+about a third.
+
+## D3 — thirty-five rows of the export carry the wrong type
+
+```{python}
+# | label: tbl-d3
+wrong = d[(d.category_orig == "Точки продажи табака")
+          & (d.type_orig == "Продуктовый магазин")]
+show(wrong.name_orig.value_counts().head(10)
+     .rename_axis("name_orig").rename("objects").to_frame())
+```
+
+Thirty-five objects pair `category_orig = Точки продажи табака` with
+`type_orig = Продуктовый магазин`. The names settle what they are.
+
+This defect was first read the other way round — as 35 grocery shops made
+invisible by the priority order, since a grocery tagged as a tobacco outlet
+loses its grocery membership. Building the seven flags is what disproved it.
+Freed from the priority order, all 35 became grocery shops *as well as* tobacco
+outlets, and the result was obviously wrong: a vape shop is not a grocery. The
+old rule returned the right answer for these rows **by accident**, and that is
+precisely what kept the defect hidden.
+
+So the finding is not about the recoder at all. It is that `type_orig` is
+unreliable on a known slice of the export. The rule resolves it through the
+evidence hierarchy it already declares — where `category_orig` exactly names one
+of the seven classes, that assertion outranks anything inferred from the type or
+the fascia — and the 35 rows go into the review queue, where a wrong field
+belongs.
+
+# What moved
+
+```{python}
+# | label: fig-delta
+# | fig-cap: "Class counts before and after. Seven independent flags, so an object may appear in more than one bar; the old rule's bars are mutually exclusive by construction."
+o, n = counts_old(), counts_new()
+order = n.sort_values().index
+y = np.arange(len(order))
+fig, ax = plt.subplots(figsize=(7.2, 4.4))
+ax.barh(y - 0.2, o[order].values, height=0.38, color=OLD, label="old single-label rule")
+ax.barh(y + 0.2, n[order].values, height=0.38, color=ACCENT, label="seven flags")
+for i, k in enumerate(order):
+    ax.text(max(o[k], n[k]), i, f"  {n[k] - o[k]:+d}", va="center", fontsize=8, color=INK)
+ax.set_yticks(y, order)
+ax.set_xlabel("objects")
+ax.set_title("What the correction moved")
+ax.legend(frameon=False, loc="lower right")
+ax.grid(axis="y", visible=False)
+ax.margins(x=0.14)
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+# | label: tbl-delta
+t = pd.DataFrame({"old": o, "new": n})
+t["delta"] = t["new"] - t["old"]
+t.loc["— sport retail (new flag)"] = [np.nan, int(d.is_sport_retail.sum()), np.nan]
+t.loc["no class"] = [int((old == "Other (outside 2022 scheme)").sum()),
+                     int((d.n_classes == 0).sum()), np.nan]
+show(t.astype("Int64"))
+```
+
+`Grocery shops` gains 91: the 51 of D1, the 35 of D3, and five objects reached by
+spelling variants the word-bag key now folds together. `Medical` loses six, of
+which three are veterinary clinics — animal health is not the health
+infrastructure this study measures. `Alcohol shops` and `Tobacco outlets` do not
+move at all, which is the expected result: both rest on the export's own
+category, and neither was ever the class with a spelling problem.
+
+# What each count rests on
+
+This is the column the repository did not have. Each flag records the strongest
+field that carried the object into the class, and the three are not
+interchangeable kinds of claim.
+
+```{python}
+# | label: fig-evidence
+# | fig-cap: "Evidence composition per class. A count resting on `category` is the export's own assertion; a count resting on `name` is a guess from the shop sign."
+ev = pd.DataFrame({
+    EN[k]: d.loc[d["is_" + k], k + "_evidence"].value_counts()
+    for k in CLS}).T.reindex(columns=["category", "type", "name"]).fillna(0).astype(int)
+ev = ev.loc[ev.sum(axis=1).sort_values().index]
+fig, ax = plt.subplots(figsize=(7.2, 4.4))
+left = np.zeros(len(ev))
+for col in ["category", "type", "name"]:
+    ax.barh(ev.index, ev[col].values, left=left, color=EV_COLORS[col], label=EV_LABEL[col])
+    left += ev[col].values
+for i, tot in enumerate(ev.sum(axis=1).values):
+    ax.text(tot, i, f"  {tot:,}", va="center", fontsize=8, color=INK)
+ax.set_xlabel("objects")
+ax.set_title("What every class count rests on")
+ax.legend(frameon=False, fontsize=8, loc="lower right")
+ax.grid(axis="y", visible=False)
+ax.margins(x=0.18)
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+# | label: tbl-evidence
+show(ev.assign(total=ev.sum(axis=1)).sort_values("total", ascending=False))
+```
+
+Read that table before quoting any count from it.
+
+- **`Tobacco outlets` is 100 % `category`.** Every one of the 60 is the export
+  asserting it. Nothing in this repository independently confirms any of them:
+  the licence registry has no tobacco class, and the 2022 tobacco list is 46
+  objects in three okrugs. That is not a weakness of the rule; it is the state of
+  the evidence, and it is why the fourth delivery's tobacco layer is reported
+  with its provenance and no verification rate.
+- **`Grocery shops` is 100 % `type`.** The class is defined by what kind of shop
+  it is, which is the most stable of the three signals.
+- **`Industrial` is 100 % `name`, all 33 objects.** The class is a fascia
+  keyword search and nothing more: it contains a pizza chain called
+  *ПиццаФабрика*, a hostel and a jewellery shop. The 2022 benchmark has ten
+  industrial objects and not one of them could be linked to the export, so there
+  is no way to check it either. **Do not report `Industrial` per okrug.**
+- **`Sport`'s six `name` rows** are the residue after D2: three sports schools, a
+  university sports building, a therapeutic-exercise centre, and the city
+  sports administration office — the last of which is an office, not a facility.
+  Six objects is a rounding error on 256, but it is the kind of judgement the
+  manual audit exists to settle.
+
+# Co-membership: what the data can and cannot say
+
+```{python}
+# | label: tbl-combo
+combo = d.loc[d.n_classes >= 2, "classes_2022"].value_counts()
+show(combo.rename_axis("classes").rename("objects").to_frame())
+```
+
+**Seven objects in the whole city carry two of the seven classes. Two of those
+seven are genuine**, and no object carries three.
+
+The two are `Ларец, магазин-бистро` and `Бонус, магазин-кафе` — a grocery that is
+also a snack bar, which is exactly the kind of double membership the 2022 study
+recorded. The other five are a grocery flagged `Industrial` because its fascia
+says *мясокомбинат* or *Хладокомбинат*, which is an artefact of the fascia search
+rather than a second membership.
+
+That is the finding of this section, and it is the strongest statement in the
+report: **the export's fields encode essentially no co-membership at all.** They
+state what an object *is*. They do not state what it *sells*. Nothing in
+`category_orig`, `type_orig` or `name_orig` records that a `Продуктовый магазин`
+also sells cigarettes — and the fourth delivery's risk layers imply that on the
+order of 560 sites in this city do.
+
+This is why the commissioned deliverable — seven calibrated probabilities
+expressing multi-label membership — cannot be produced from this source, by any
+model. The information is not in the inputs. More labelling would not create it
+and neither would a larger model.
+
+Two sources do carry it, and both are already in this repository: the
+contractor's v4 risk layers (`data/raw_v4/`, with the caveat that 82 % of them
+are the inferred tier the contractor's own comment says needs separate checking)
+and the FSRAR licence registry for alcohol (`data/processed/v4_licences.csv`,
+which matches 80.6 % of v4 records to a licence and finds a v4 object at the
+address of 97.7 % of the 442 active off-trade retail licences). **Every
+co-membership claim must be built from those, never from the table above.**
+
+
+# Validation against the 2022 benchmark
+
+```{python}
+# | label: tbl-pr
+mt = pd.read_csv(PROC / "match_2022_local.csv", sep=";",
+                 encoding="utf-8-sig", low_memory=False)
+lk = mt[mt.tier.isin(["exact", "probable"])].copy()
+lk["ti"] = lk.target_index.astype(int)
+LAB = {v: k for k, v in tx.CLASS_RU_2022.items()}
+lk["y"] = lk.category_orig.map(LAB)
+lk = lk[lk.y.notna()].reset_index(drop=True)
+ex = d.iloc[lk.ti.values].reset_index(drop=True)
+
+rows = []
+for k in CLS:
+    y = (lk.y == k).values
+    yhat = ex["is_" + k].values
+    o_hat = (old.iloc[lk.ti.values].values == EN[k])
+    tp, fp, fn = int((y & yhat).sum()), int((~y & yhat).sum()), int((y & ~yhat).sum())
+    otp, ofp, ofn = int((y & o_hat).sum()), int((~y & o_hat).sum()), int((y & ~o_hat).sum())
+    # A class with no labelled row gets no number at all.  Industrial would
+    # otherwise print a precision of 0.000 off a single false positive, which
+    # reads as a measurement and is not one.
+    refuse = y.sum() == 0
+    rows.append({
+        "class": EN[k], "labelled": int(y.sum()),
+        "P old": np.nan if refuse else (otp / (otp + ofp) if otp + ofp else np.nan),
+        "P new": np.nan if refuse else (tp / (tp + fp) if tp + fp else np.nan),
+        "R old": np.nan if refuse else (otp / (otp + ofn) if otp + ofn else np.nan),
+        "R new": np.nan if refuse else (tp / (tp + fn) if tp + fn else np.nan)})
+pr = pd.DataFrame(rows).set_index("class")
+show(pr.round(3))
+
+# How many of the old rule's errors the multi-label form converts into hits.
+hit = np.array([ex.iloc[i]["is_" + lk.y.iloc[i]] for i in range(len(lk))])
+old_wrong = (old.iloc[lk.ti.values].values != lk.y.map(EN).values)
+n_old_wrong, n_converted = int(old_wrong.sum()), int((old_wrong & hit).sum())
+```
+
+```{python}
+# | label: pr-prose
+display(Markdown(
+    f"On **1,133 linked rows — 15.6 % of the city, three okrugs of nine**. "
+    f"The single class that moves is `Grocery shops`, whose recall rises from "
+    f"{pr.loc['Grocery shops', 'R old']:.3f} to {pr.loc['Grocery shops', 'R new']:.3f} — "
+    f"D1 and D3 are visible in the benchmark, not only in the city-wide count. "
+    f"`Sport` precision goes to {pr.loc['Sport', 'P new']:.3f}. Nothing else changes, "
+    f"which is the expected result: the defects were never in the classes the "
+    f"benchmark can see well."))
+```
+
+Two classes carry no usable number. `Tobacco outlets` has 16 labelled rows, so
+its recall of 0.625 is 10 of 16 and a confidence interval on it spans most of the
+unit interval. `Industrial` has none at all — not one of the 2022 study's ten
+industrial objects could be linked to the export — so the row is blank rather
+than showing the 0.000 precision that a single false positive would otherwise
+produce.
+
+```{python}
+# | label: convert-prose
+display(Markdown(
+    f"The comparison is also not like for like, in the new rule's favour, and it "
+    f"is worth being explicit: the old rule is single-label, so an object it "
+    f"assigned to tobacco could not also count as grocery. Of its "
+    f"**{n_old_wrong} errors** on these rows, **{n_converted}** are cases where "
+    f"the seven-flag form does put the benchmark's class on the object — they "
+    f"were never mistakes about the world, only about the shape of the output. "
+    f"The remaining {n_old_wrong - n_converted} are genuine misses or, more often, "
+    f"rows where the matcher linked two different buildings."))
+```
+
+That last category is not a rounding error. `Medical` recall appears to dip by
+one row against the old rule; the row is a dental clinic in the 2022 list that
+the matcher linked to the **Central Veterinary Clinic** in the export. The new
+rule's veterinary veto is right and the benchmark link is wrong, which is exactly
+the failure mode the error decomposition in
+`data/processed/taxonomy_2022_validation.txt` separates out.
+
+::: {.callout-warning}
+## Why this table cannot be extrapolated
+
+Linkage to the 2022 benchmark is **systematically class-dependent**: medical
+organisations link at 86.5 %, alcohol shops at 49.1 %, sport at 42.0 %, tobacco
+at 34.8 %, industrial at 0 %. It is worse inside classes — supermarkets link at
+86.4 % against 48.5 % for ordinary grocery shops, sports complexes at 84.2 %
+against 20.0 % for outdoor sports grounds. The table above is therefore measured
+on indoor, commercial, chain-branded objects whose names survived four years,
+and applied to a city where outdoor pitches and corner shops are most of the
+population. The one axis that is *not* distorted is okrug.
+:::
+
+# By okrug
+
+```{python}
+# | label: tbl-okrug
+tab = pd.DataFrame({EN[k]: d.groupby("okrug_key")["is_" + k].sum() for k in CLS}).astype(int)
+tab.insert(0, "objects", d.groupby("okrug_key").size())
+tab = tab.sort_values("objects", ascending=False)
+show(tab)
+```
+
+Three of these nine okrugs — Lomonosovsky, Oktyabrsky and Maiskaya Gorka — carry
+the 2022 benchmark. The other six hold 1,649 objects, 22.7 % of the city, with no
+object-level check of any kind for any class. For alcohol the licence registry
+now covers all nine; for everything else the six stay dark, and a per-okrug
+figure drawn from them should ship marked as extrapolated or not ship.
+
+`Industrial` appears in this table for completeness and must not be read from
+it: 33 objects city-wide, every one of them a fascia keyword match.
+
+# What happens next
+
+**The review queue** (`data/processed/taxonomy_2022_review_queue.csv`) ranks every
+object whose membership rests on weak evidence — the `name` rows, the
+multi-label cells, sport retail, and types that are near-misses of a known class
+type. It is work, not a number: a human going down it fixes real records.
+
+**The audit** (`data/processed/taxonomy_2022_audit_sample.csv`, protocol in
+`docs/taxonomy_2022_audit_protocol.md`) is 600 objects in six strata drawn over
+the rule's output across the whole city, including a simple random sample of all
+7,263 so the stratified cells can be reweighted back. It costs about twenty
+hours. It is the only instrument in this repository that reaches the 84 % the
+benchmark does not, and the only one that can settle the definitional questions —
+whether a sauna, a sports shop or a university canteen belongs on a 2022 list.
+
+**Two questions belong to the authors of the 2022 study**, not to us. Is
+`Магазины` "grocery shops" or "shops of any kind"? All 400 of its rows are food
+retail and there is no non-food retail in the class at all, so the data reads as
+a grocery class with a general name — but the answer changes the target and every
+comparison downstream. And does `Спортивные объекты` include sports shops and
+saunas? On the benchmark's own evidence it excludes at least saunas.
+
+# What this does not do
+
+- **No probabilities.** Seven booleans with a stated evidence level, not seven
+  calibrated scores. The design document explains why the calibrated form is not
+  reachable from these inputs.
+- **No model.** Nothing here is learned, and nothing here needs a GPU.
+- **No co-membership beyond the export's own fields.** §4's 49 objects are a
+  floor roughly an order of magnitude below reality.
+- **No tobacco verification rate.** The 60 tobacco objects rest entirely on the
+  export's category and nothing in this repository can check them.
+- **No `Industrial` anywhere it would be read as a measurement.**
+- **No city-wide accuracy claim.** 15.6 % validated, at the easy end of the
+  distribution, in three okrugs of nine.
+
+The old rule remains in `v3_common.recode_2022()` and the rendered v3 reports
+still carry the numbers it produces. That is deliberate — those reports are a
+record of what was delivered and when. The figures corrected here are the ones to
+cite going forward.

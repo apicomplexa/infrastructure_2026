@@ -28,6 +28,11 @@ match-2022 = { cmd = "python scripts/match_2022.py", description = "Run the inde
 eda-egais = { cmd = "quarto render analysis/egais/eda-egais.qmd --to pdf --output-dir ../../reports/egais", description = "Render the FSRAR licence-registry EDA -> reports/egais/eda-egais.pdf" }
 parse-egais = { cmd = "python scripts/parse_egais.py", description = "Stream the 10.9 GB FSRAR licence registry -> data/processed/egais_licences_arkhangelsk.tsv" }
 match-egais-v4 = { cmd = "python scripts/match_egais_v4.py", description = "Match data/raw_v4 against the licence registry -> data/processed/v4_licences.csv" }
+licmatch-test = { cmd = "python packages/licmatch/run_tests.py", description = "Run the licmatch (address-level record linkage) test suite" }
+build-taxonomy = { cmd = "python scripts/build_taxonomy_2022.py", description = "Write the seven independent 2022-class flags for the v3 export -> data/processed/taxonomy_2022.csv" }
+validate-taxonomy = { cmd = "python scripts/validate_taxonomy_2022.py", description = "Score the 2022-class flags against the 2022 benchmark on the linked rows" }
+audit-sample = { cmd = "python scripts/audit_sample_2022.py", description = "Draw the stratified manual-audit sample over the unlabelled rows" }
+review-queue = { cmd = "python scripts/review_queue_2022.py", description = "Build the manual-review queue from the `name`-evidence rows" }
 profile = { cmd = "python scripts/profile_data.py", description = "Print a quick profile of the enriched dataset" }
 build-ru = { cmd = "python scripts/build_ru_v3.py && python scripts/build_ru_basecheck.py && python scripts/build_ru_v4.py && python scripts/ru_numfmt.py", description = "Regenerate the Russian v3/v4 twins from the English sources, then normalise their number formatting" }
 
