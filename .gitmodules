@@ -1,0 +1,3 @@
+[submodule "packages/licmatch"]
+	path = packages/licmatch
+	url = https://github.com/apicomplexa/egais_licmatcher.git
