@@ -34,7 +34,8 @@ presentations.
 │   ├── report_arkhangelsk_2022.md   # 2022 report summary (previous stage)
 │   ├── crosswalk_2022.md            # 2026 -> 2022 taxonomy crosswalk and its defects
 │   ├── egais_source_notes.md        # the FSRAR licence registry, field by field
-│   └── v4_source_notes.md           # the fourth delivery: what it is and how to read it
+│   ├── v4_source_notes.md           # the fourth delivery: what it is and how to read it
+│   └── v4_yandex_check.md           # the unlicensed alcohol objects, checked on Yandex Maps
 ├── references/                  # original presentations (binary, source of docs/)
 │   ├── infrastructure_rf.pptx
 │   └── report_arkhangelsk_2022.pptx
@@ -70,11 +71,13 @@ presentations.
 │   ├── egais.py                 # FSRAR licence-registry loader and okrug recovery
 │   ├── v4_common.py             # fourth-delivery loaders, tiers, corrected recoder
 │   ├── v4_egais.py              # adapter: the v4 export and the registry -> licmatch
+│   ├── v4_yandex.py             # manual check of the unlicensed alcohol rows on Yandex Maps
+│   ├── v4_export.py             # the three deliverable licence spreadsheets
 │   └── taxonomy_2022.py         # the seven independent 2022-class flags
 ├── packages/licmatch/           # standalone record-linkage package (own tests & docs)
-│   ├── src/licmatch/            # toponyms, the three-term score, selection
+│   ├── src/licmatch/            # toponyms, the score, exclusive selection, brand learning
 │   ├── docs/METHODOLOGY.md      # why each weight, floor and route is what it is (RU)
-│   └── tests/                   # 48 unit tests — `pixi run licmatch-test`
+│   └── tests/                   # 130 unit tests — `pixi run licmatch-test`
 ├── scripts/                     # runnable entry points
 │   ├── profile_data.py          # quick dataset profile
 │   ├── match_2022.py            # CLI launcher for arkhinfra.match_2022
@@ -83,6 +86,8 @@ presentations.
 │   ├── build_ru_v4.py           # regenerate the Russian twin of eda-v4.qmd
 │   ├── parse_egais.py           # stream the FSRAR registry XML -> processed TSV
 │   ├── match_egais_v4.py        # join the v4 export to the licence registry
+│   ├── check_yandex_v4.py       # check the unlicensed alcohol objects on Yandex Maps
+│   ├── export_licences_v4.py    # build the deliverable licence spreadsheets (XLSX)
 │   └── ru_numfmt.py             # Russian number conventions in the twins
 ├── pixi.toml                    # environment & tasks (pixi / conda-forge)
 └── pixi.lock

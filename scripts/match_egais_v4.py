@@ -8,6 +8,16 @@ back out with the licence columns appended.
     pixi run match-egais-v4                       # both layers, one file
     pixi run match-egais-v4 --layer tobacco       # the tobacco layer alone
     pixi run match-egais-v4 --calibrate           # + the threshold ladder
+    pixi run match-egais-v4 --no-exclusive        # switch one new rule off
+
+Three rules decide which licence an object holds, beyond the score itself:
+one licensed outlet goes to one shop (`Taken` for the others; records of one
+shop share it), the licence must permit the object's trade unless the name
+says the holder is the shop (`Other trade`), and the known brands must not
+rule the pair out, in either direction (`Other chain`).  An archived licence is
+quoted as the object's own only if the name agrees or nothing in force of its
+trade stands at the address.  The brands are learned from the data
+first and written to `v4_brand_aliases.csv` for review.
 
 The registry licenses alcohol and has no tobacco class at all, so the tobacco
 layer is matched against the same alcohol licences and the result is labelled
@@ -37,6 +47,7 @@ from arkhinfra.v4_common import load_v4  # noqa: E402
 LAYERS = {"both": None, "alcohol": "Alcohol", "tobacco": "Tobacco"}
 STEM = {"both": "v4_licences", "alcohol": "v4_alcohol_licences",
         "tobacco": "v4_tobacco_licences"}
+BRANDS_CSV = PROC / "v4_brand_aliases.csv"
 
 # Written first, so the licence answer is readable without scrolling past the
 # 22 columns the delivery already had.
@@ -114,7 +125,7 @@ def _layer_sections(out: pd.DataFrame, eg: pd.DataFrame) -> list[str]:
             f"{int(probable.sum()):,} ({100 * probable.mean():.1f} %)",
             f"weak (archived or non-retail licence only):               "
             f"{int((tob['licence_evidence'] == m.EVIDENCE_WEAK).sum()):,}",
-            f"no licence at the address:                                "
+            f"no licence of its own:                                    "
             f"{int((tob['licence_evidence'] == '').sum()):,}",
             "",
             "The inference: the registry has no tobacco class, so an object can",
@@ -155,6 +166,12 @@ def main() -> int:
                     help="which risk layer to write out (default both)")
     ap.add_argument("--calibrate", action="store_true",
                     help="append the threshold ladder and banded samples")
+    ap.add_argument("--no-learn", action="store_true",
+                    help="do not learn fascia -> holder pairs from the data")
+    ap.add_argument("--no-exclusive", action="store_true",
+                    help="let several objects quote one licensed outlet (the old rule)")
+    ap.add_argument("--no-brand-rule", action="store_true",
+                    help="let an object take a licence held by another known chain")
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
 
@@ -167,8 +184,13 @@ def main() -> int:
     # whole export keeps `--layer` a view of one result rather than a different
     # one.  The reverse-coverage table below then reads as "of the registry,
     # what this layer accounts for".
-    out = m.enrich(v4, eg, accept=args.accept, addr_min=args.addr_min,
-                   max_m=args.max_m, w=tuple(args.weights))
+    joined = m.join(v4, eg, accept=args.accept, addr_min=args.addr_min,
+                    max_m=args.max_m, w=tuple(args.weights),
+                    learn=not args.no_learn, exclusive=not args.no_exclusive,
+                    brand_rule=not args.no_brand_rule)
+    out = m.enrich(v4, eg, result=joined)
+    if joined.brands is not None and args.layer == "both":
+        joined.brands.table.to_csv(BRANDS_CSV, sep=";", encoding="utf-8-sig", index=False)
     if LAYERS[args.layer]:
         out = out[out["risk"] == LAYERS[args.layer]].reset_index(drop=True)
 
@@ -179,7 +201,11 @@ def main() -> int:
     out.to_csv(out_csv, sep=";", encoding="utf-8-sig", index=False)
 
     n = len(out)
-    matched = out["licence_status"] != m.STATUS_NONE
+    matched = out["licence_status"].isin(m.STATUS_OWN)
+    rules = [name for flag, name in ((args.no_learn, "brand learning"),
+                                     (args.no_exclusive, "one outlet per object"),
+                                     (args.no_brand_rule, "brand conflict rule"))
+             if flag]
     lines = [
         "v4 x FSRAR licence registry",
         "=" * 72,
@@ -188,15 +214,37 @@ def main() -> int:
         f"score >= {args.accept:.2f};  address >= {args.addr_min:.2f}",
         f"v4 records: {n:,}   licences in the extract: {len(eg):,} "
         f"({int(eg['is_active'].sum()):,} in force)",
+        f"rules switched OFF for this run: {', '.join(rules)}" if rules
+        else "all rules on: one outlet per object, trade compatibility, brand conflict",
         "",
-        f"matched to at least one licence: {int(matched.sum()):,} ({100 * matched.mean():.1f} %)",
+        f"holding a licence of their own: {int(matched.sum()):,} ({100 * matched.mean():.1f} %)",
+        f"a licence at the address at all:  "
+        f"{int((out['licence_n_matched'] > 0).sum()):,} "
+        f"({100 * (out['licence_n_matched'] > 0).mean():.1f} %)",
         "",
         # The headline is a count of alcohol licences whichever layer it covers.
         # Said once here, so no one reads it as a tobacco verification rate.
         *(["Tobacco rows are matched against alcohol licences -- the registry has",
            "no tobacco class -- so their match is PROBABLE corroboration only.",
            ""] if (out["risk"] == "Tobacco").any() else []),
-        out["licence_status"].value_counts().to_string(),
+        out["licence_status"].value_counts().reindex(m.STATUS_ORDER, fill_value=0)
+           .to_string(),
+        "",
+        "Active / Archived  the object holds this licence itself",
+        "Taken              a licence of its trade is at the address, but that outlet",
+        "                   went to another shop with the stronger claim",
+        "                   (licence_claimed_by); one outlet is one counter, and the",
+        "                   records of one shop, in either file, share it",
+        "Other chain        the known brands rule every licence here out: the object",
+        "                   is a known chain and none is its own (a Бристоль where",
+        "                   only Тандер holds one), or each licence is a known",
+        "                   chain's and the object is not that chain",
+        "Other trade        only licences of the other trade at the address (a shop",
+        "                   licence where the object is a bar, or the reverse)",
+        "Not in registry    no licence at the address at all",
+        "",
+        "where the chosen pair's name term came from (own licences only):",
+        out.loc[matched, "licence_name_basis"].value_counts().to_string(),
         "",
         "by match route / address level:",
         out.loc[matched].groupby(["licence_match_method", "licence_match_level"])
@@ -226,6 +274,30 @@ def main() -> int:
         "",
     ]
     lines += _layer_sections(out, eg)
+    if joined.brands is not None:
+        br = joined.brands
+        t = br.table
+        lines += [
+            "=" * 72,
+            "FASCIA -> HOLDER PAIRS LEARNED FROM THE DATA (alcohol layer)",
+            "=" * 72,
+            f"rounds: {br.iterations}  "
+            + ("converged" if br.cycle == 0 else
+               f"stopped on a two-round cycle; {br.oscillating} objects alternate "
+               "and vote for nothing" if br.cycle == 2 else "stopped at max_iter"),
+            f"pairs in use: {int(t['used'].sum())} over "
+            f"{t.loc[t['used'], 'fascia'].nunique()} fascias "
+            f"(accepted by the thresholds: {int(t['accepted'].sum())}; "
+            f"overruled by BRAND_REVIEW: {int((t['review'] != '').sum())})",
+            "",
+            t[t["used"]][["fascia", "holder", "holder_name", "fascia_sites",
+                          "sites_assigned", "share", "lift", "franchise"]]
+             .to_string(index=False),
+            "",
+            "A learned pair is a hypothesis with a count behind it, not a fact:",
+            f"the full table, near misses included, is {BRANDS_CSV.name}.",
+            "",
+        ]
     lines += [
         "=" * 72,
         "REVERSE: HOW MUCH OF THE REGISTRY THIS EXPORT ACCOUNTS FOR",

@@ -41,6 +41,7 @@ _root = next(p for p in [Path.cwd(), *Path.cwd().parents]
 sys.path.insert(0, str(_root / "src"))
 from arkhinfra import v4_common as v4  # noqa: E402
 from arkhinfra import v4_egais as mg  # noqa: E402
+from arkhinfra import v4_yandex as yx  # noqa: E402
 from arkhinfra.egais import load_egais  # noqa: E402
 from arkhinfra.paths import PROC  # noqa: E402
 
@@ -50,13 +51,64 @@ from arkhinfra.paths import PROC  # noqa: E402
 MATCHED = PROC / "v4_licences.csv"
 d = pd.read_csv(MATCHED, sep=";", encoding="utf-8-sig", low_memory=False)
 d["licence_evidence"] = d["licence_evidence"].fillna("")
+d["licence_name_basis"] = d["licence_name_basis"].fillna("")
+d["licence_claimed_by"] = d["licence_claimed_by"].fillna("")
 eg = load_egais()
+
+# The same join as it stood before the one-outlet / trade / brand rules: a
+# frozen copy of the earlier v4_licences.csv, kept only for the before/after
+# comparison.  Optional -- without it that comparison is skipped, not faked.
+BEFORE = PROC / "v4_licences_before_rules.csv"
+old = (pd.read_csv(BEFORE, sep=";", encoding="utf-8-sig", low_memory=False)
+       if BEFORE.exists() else None)
+
+# The (fascia, holder) pairs the join learned from the data; `used` marks the
+# ones that took part.
+BRANDS = PROC / "v4_brand_aliases.csv"
+br = (pd.read_csv(BRANDS, sep=None, engine="python", encoding="utf-8-sig",
+                  dtype={"holder": str})
+      if BRANDS.exists() else None)
+
+# The manual check of the rows with no licence of their own against a third
+# directory, also pre-computed: `pixi run check-yandex` reads Yandex Maps once
+# per object and caches the answer, so this report stays offline like the rest
+# of it.  The file may cover only part of the queue; the rest reads «не пров.».
+ya = pd.read_csv(PROC / "v4_alcohol_none_yandex.csv", sep=";",
+                 encoding="utf-8-sig").fillna("")
+YA = ya.drop_duplicates("site_key", keep="last").set_index("site_key")
+YA_UNCHECKED = "unchecked"
+# A page Yandex never answered claims as little as a page never requested.
+YA_ORDER = [s for s in yx.STATUS_ORDER if s != yx.STATUS_ERROR] + [YA_UNCHECKED]
+YA_RU = {**yx.STATUS_RU, YA_UNCHECKED: "не пров."}
+
+
+def ya_mark(key):
+    if key not in YA.index:
+        return YA_UNCHECKED
+    s = YA.at[key, "yandex_status"]
+    return s if s in yx.STATUS_RU and s != yx.STATUS_ERROR else YA_UNCHECKED
+
 
 RISK_RU = {"Alcohol": "Алкоголь", "Tobacco": "Табак"}
 LEV_RU = {"direct": "Прямое", "probable": "Вероятное", "weak": "Слабое",
-          "": "Нет лицензии"}
+          "": "Нет своей лицензии"}
 METHOD_RU = {"geo": "По координатам", "address": "Только по адресу"}
 LEVEL_RU = {"house": "до дома", "street": "до улицы"}
+STATUS_ORDER = mg.STATUS_ORDER
+STATUS_RU = {mg.STATUS_ACTIVE: "Действующая",
+             mg.STATUS_ARCHIVED: "Архивная",
+             mg.STATUS_TAKEN: "Точка у другого объекта",
+             mg.STATUS_OTHER_CHAIN: "Другая сеть",
+             mg.STATUS_OTHER_TRADE: "Другой вид деятельности",
+             mg.STATUS_NONE: "Нет в реестре"}
+# Column headers for the wide tables, where six full labels will not fit.
+STATUS_HDR = {mg.STATUS_ACTIVE: "Действ.", mg.STATUS_ARCHIVED: "Архивн.",
+              mg.STATUS_TAKEN: "У другого", mg.STATUS_OTHER_CHAIN: "Др. сеть",
+              mg.STATUS_OTHER_TRADE: "Др. вид", mg.STATUS_NONE: "Нет в реестре"}
+BASIS_RU = {mg.NAME_MANUAL: "Справочник сетей (ведётся вручную)",
+            mg.NAME_LEARNED: "Пара, выученная из данных",
+            mg.NAME_FUZZY: "Сравнение названий как строк",
+            mg.NAME_GENERIC: "Родовая вывеска — название не оценивается"}
 STATUS_EG_RU = {"Active": "Действующая", "Expired": "Истёкшая",
                 "Terminated": "Прекращённая", "Reissued": "Переоформленная",
                 "Annulled": "Аннулированная"}
@@ -85,7 +137,7 @@ OKRUG_ORDER = ["Октябрьский округ", "Ломоносовский 
 
 def ru(x, nd=0):
     """A number in Russian convention: space for thousands, comma for the point."""
-    return f"{x:,.{nd}f}".replace(",", " ").replace(".", ",")
+    return f"{x:,.{nd}f}".replace(",", " ").replace(".", ",")
 
 
 def pct(part, whole, nd=1):
@@ -96,15 +148,49 @@ def table(df, index=False):
     display(Markdown(df.to_markdown(index=index, disable_numparse=True)))
 
 
+def md_widths(df, widths):
+    """A pipe table whose column widths are set, not inferred.
+
+    Pandoc sizes a wide pipe table by the dash counts of its separator line,
+    and `to_markdown()` sets those to the longest cell -- so one long cell
+    squeezes a short-valued column until its words overprint the next one.
+    """
+    cells = df.astype(str).apply(lambda c: c.str.replace("|", "/", regex=False))
+    lines = ["| " + " | ".join(map(str, df.columns)) + " |",
+             "|" + "|".join("-" * int(w) for w in widths) + "|"]
+    lines += ["| " + " | ".join(r) + " |" for r in cells.itertuples(index=False)]
+    return "\n".join(lines)
+
+
+def table_w(df, widths):
+    display(Markdown(md_widths(df, widths)))
+
+
 def clean(s):
     """Pipe characters would break the markdown table this ends up in."""
     return s.fillna("").astype(str).str.replace("|", "/", regex=False).str.strip()
 
 
+def status_counts(part, col="licence_status"):
+    """Counts per status in STATUS_ORDER, zeros included."""
+    vc = part[col].value_counts()
+    return {s: int(vc.get(s, 0)) for s in STATUS_ORDER}
+
+
+def multi_outlets(df):
+    """Outlets -- (licence number, outlet address) within a layer -- quoted by
+    more than one row as that row's own licence: (outlets, rows in them)."""
+    own = df[df["licence_status"].isin(mg.STATUS_OWN)]
+    k = own.groupby(["risk", "licence_no", "licence_outlet_address"]).size()
+    return int((k > 1).sum()), int(k[k > 1].sum())
+
+
 alc = d[d["risk"] == "Alcohol"]
 tob = d[d["risk"] == "Tobacco"]
-none_alc = alc[alc["licence_status"] == mg.STATUS_NONE]
-none_tob = tob[tob["licence_status"] == mg.STATUS_NONE]
+own = d[d["licence_status"].isin(mg.STATUS_OWN)]
+at_addr = d[d["licence_status"] != mg.STATUS_NONE]
+none_alc = alc[alc["licence_status"].isin(mg.STATUS_NO_OWN)]
+none_tob = tob[tob["licence_status"].isin(mg.STATUS_NO_OWN)]
 ```
 
 # О чём этот отчёт
@@ -114,17 +200,20 @@ none_tob = tob[tob["licence_status"] == mg.STATUS_NONE]
 (снимок от 1 июля 2026 года) даёт независимую проверку этой разметки: для
 каждого объекта выгрузки ищется лицензия по тому же адресу.
 
-Отчёт показывает три вещи:
+Отчёт показывает четыре вещи:
 
-1. уже посчитанные итоги сопоставления по обоим слоям, в табличном виде;
-2. перечень алкогольных объектов, для которых лицензия по адресу не нашлась;
-3. классы табачных объектов, для которых лицензия по адресу не нашлась.
+1. что изменилось в правилах сопоставления и как это сдвинуло итоги;
+2. уже посчитанные итоги сопоставления по обоим слоям, в табличном виде;
+3. перечень алкогольных объектов без собственной лицензии и результат их
+   ручной проверки по Яндекс Картам — существует ли объект;
+4. классы табачных объектов, для которых лицензия не нашлась.
 
 ```{python}
 # | label: method
 rows = [
     ("Источник разметки", "data/raw_v4 — два CSV, алкоголь и табак"),
     ("Источник лицензий", "Сводный реестр лицензий ФСРАР, снимок 01.07.2026"),
+    ("Ручная проверка", "Яндекс Карты, по одному запросу на объект без лицензии"),
     ("Записей в выгрузке", f"{ru(len(d))} ({ru(len(alc))} алкоголь, {ru(len(tob))} табак)"),
     ("Лицензий по городу", f"{ru(len(eg))}, из них действующих {ru(int(eg['is_active'].sum()))}"),
     ("Веса пары", f"адрес {ru(mg.W_ADDR, 2)} / название {ru(mg.W_NAME, 2)} / "
@@ -132,6 +221,9 @@ rows = [
     ("Радиус поиска", f"{ru(mg.MAX_M)} м"),
     ("Порог принятия", f"суммарная оценка ≥ {ru(mg.ACCEPT, 2)}; "
                        f"отдельно адрес ≥ {ru(mg.ADDR_MIN, 2)}"),
+    ("Правила выбора", "одна точка — один объект в слое; вид лицензии "
+                       "соответствует виду торговли; известные сети не "
+                       "противоречат друг другу"),
 ]
 table(pd.DataFrame(rows, columns=["Параметр", "Значение"]))
 ```
@@ -142,21 +234,120 @@ table(pd.DataFrame(rows, columns=["Параметр", "Значение"]))
 что в радиусе 100 м соседний дом отличается от нужного только номером, а
 координаты реестра округлены и различить их сами по себе не могут.
 
+## Как читать статус лицензии
+
+Статус описывает лицензию, которую получил *этот объект*, а не всё, что
+лежит по его адресу.
+
+* **Действующая / Архивная** — у объекта своя лицензия, в силе или уже нет.
+* **Точка у другого объекта** — лицензия нужного вида по адресу есть, но её
+  точка досталась другому объекту с более сильной заявкой: одна лицензированная
+  точка — один прилавок.
+* **Другая сеть** — лицензии нужного вида по адресу есть, но все они
+  принадлежат другой известной сети (например, «Бристоль» там, где лицензия
+  только у «Тандера»).
+* **Другой вид деятельности** — по адресу есть лишь лицензии другого вида:
+  розничная там, где объект — бар, или наоборот, либо оптовая.
+* **Нет в реестре** — по адресу нет ни одной лицензии.
+
+Первые два статуса — «своя лицензия»; остальные четыре — «своей лицензии
+нет», и именно они образуют очередь на ручную проверку.
+
 ## Как читать степень доказательности
 
 * **Прямое.** Реестр лицензирует ровно тот товар, которым размечена запись.
   Только алкогольные записи.
-* **Вероятное.** По адресу действует розничная лицензия на алкоголь, а запись
-  размечена как табачная. Табачного реестра не существует; алкоголь и табак
-  продаются через один прилавок, поэтому это косвенная поддержка разметки, но
-  не её подтверждение.
-* **Слабое.** Совпадение есть, но только с архивной или нерозничной лицензией —
-  вывода о совместной продаже она не даёт.
-* **Нет лицензии.** По адресу объекта в реестре нет ни одной лицензии.
+* **Вероятное.** Своя лицензия объекта — действующая розничная лицензия на
+  алкоголь, а запись размечена как табачная. Табачного реестра не существует;
+  алкоголь и табак продаются через один прилавок, поэтому это косвенная
+  поддержка разметки, но не её подтверждение.
+* **Слабое.** Своя лицензия есть, но архивная или нерозничная — вывода о
+  совместной продаже она не даёт.
+* **Нет своей лицензии.** Объекту не досталось ни одной лицензии.
 
 **Столбцы «прямое» и «вероятное» считают разные утверждения — складывать их
 нельзя.** В частности, доля «вероятных» по табаку не является долей
 подтверждённых табачных точек: подтвердить их в этом репозитории нечем.
+
+# Что изменилось в сопоставлении
+
+Прежняя версия сопоставления приписывала одну и ту же лицензию многим
+объектам, а оценки по названию почти везде были низкими. Причин три.
+
+1. **Номер лицензии принадлежит организации, а не точке.** Одна лицензия
+   сети покрывает десятки адресов; точка — это пара «ИНН держателя + адрес».
+2. **Объекты по одному адресу выбирали лицензию независимо друг от друга.**
+   Пять магазинов в одном торговом центре брали одну и ту же точку, хотя
+   прилавок с этой лицензией там один.
+3. **Реестр называет держателя, выгрузка — вывеску.** В реестре ООО «Ритейл»,
+   в выгрузке «Союз»; сравнение строк таких пар не видит.
+
+Новые правила отвечают на каждую из причин.
+
+1. **Одна точка — один объект** в пределах слоя риска. Точки раздаются
+   жадно, начиная с самой сильной заявки; объект, чья точка ушла другому,
+   получает статус «Точка у другого объекта». Слои алкоголя и табака
+   раздаются раздельно: один и тот же магазин есть в обоих файлах.
+2. **Лицензия должна разрешать торговлю объекта:** продажа навынос — только
+   розничная лицензия, общепит — только лицензия на общественное питание.
+3. **Две известные сети не должны противоречить паре.** Пары «вывеска —
+   держатель» берутся из справочника сетей и из данных (раздел
+   [Вывеска и держатель](#sec-brands)); название не оценивается вовсе, если
+   вывеска родовая («Продукты», «Кафе»).
+
+```{python}
+# | label: changes-lead
+n_own, n_addr = len(own), len(at_addr)
+if old is not None:
+    old_own = int(old["licence_status"].isin(mg.STATUS_OWN).sum())
+    old_addr = int((old["licence_status"] != mg.STATUS_NONE).sum())
+    txt = (f"Лицензия по адресу вообще есть у **{ru(n_addr)}** из {ru(len(d))} "
+           f"записей ({pct(n_addr, len(d))} %) — раньше у {ru(old_addr)}: "
+           "новые правила не меняют, что лежит по адресу. Меняется другое: "
+           f"своя лицензия теперь у **{ru(n_own)}** записей "
+           f"({pct(n_own, len(d))} %), а не у {ru(old_own)}. Разница — "
+           "объекты, которые делили одну точку с соседом, держали лицензию не "
+           "того вида или лицензию чужой сети.")
+else:
+    txt = (f"Лицензия по адресу вообще есть у **{ru(n_addr)}** из {ru(len(d))} "
+           f"записей ({pct(n_addr, len(d))} %), своя — у **{ru(n_own)}** "
+           f"({pct(n_own, len(d))} %). Прежняя версия результата "
+           f"(`{BEFORE.name}`) не найдена, поэтому сравнение «до/после» ниже "
+           "пропущено.")
+display(Markdown(txt))
+```
+
+```{python}
+# | label: changes-table
+if old is not None:
+    x = pd.crosstab(old["licence_status"], d["licence_status"])
+    x = x.reindex(index=[s for s in STATUS_ORDER if s in x.index],
+                  columns=STATUS_ORDER, fill_value=0)
+    out = pd.DataFrame({"Было": [STATUS_RU[s] for s in x.index]})
+    for s in STATUS_ORDER:
+        out[STATUS_HDR[s]] = [ru(v) for v in x[s]]
+    out["Всего"] = [ru(v) for v in x.sum(axis=1)]
+    tot = x.sum(axis=0)
+    out.loc[len(out)] = (["Стало"] + [ru(tot[s]) for s in STATUS_ORDER]
+                         + [ru(int(tot.sum()))])
+    table_w(out, [16, 9, 9, 10, 9, 8, 10, 8])
+```
+
+```{python}
+# | label: changes-outlets
+m_now, r_now = multi_outlets(d)
+if old is not None:
+    m_old, r_old = multi_outlets(old)
+    display(Markdown(
+        "Точкой здесь считается пара «номер лицензии + адрес точки» внутри "
+        f"одного слоя. Раньше **{ru(m_old)}** точек были приписаны сразу "
+        f"нескольким записям — всего {ru(r_old)} записей делили их между собой. "
+        f"Теперь таких точек **{ru(m_now)}**: каждая точка стоит за одним "
+        "объектом слоя."))
+else:
+    display(Markdown(f"Точек, приписанных нескольким записям одного слоя: "
+                     f"**{ru(m_now)}**."))
+```
 
 # Итоги сопоставления
 
@@ -166,22 +357,30 @@ table(pd.DataFrame(rows, columns=["Параметр", "Значение"]))
 # | label: headline
 rows = []
 for key, part in (("Alcohol", alc), ("Tobacco", tob), (None, d)):
-    st = part["licence_status"].value_counts()
-    matched = len(part) - st.get(mg.STATUS_NONE, 0)
+    n_o = int(part["licence_status"].isin(mg.STATUS_OWN).sum())
+    n_a = int((part["licence_status"] != mg.STATUS_NONE).sum())
     rows.append({
         "Слой": RISK_RU.get(key, "Всего"),
         "Записей": ru(len(part)),
-        "Сопоставлено": f"{ru(matched)} ({pct(matched, len(part))} %)",
-        "Действующая": ru(st.get(mg.STATUS_ACTIVE, 0)),
-        "Архивная": ru(st.get(mg.STATUS_ARCHIVED, 0)),
-        "Нет в реестре": ru(st.get(mg.STATUS_NONE, 0)),
+        "Своя лицензия": f"{ru(n_o)} ({pct(n_o, len(part))} %)",
+        "Лицензия по адресу": f"{ru(n_a)} ({pct(n_a, len(part))} %)",
     })
 table(pd.DataFrame(rows))
 ```
 
-Статус здесь — статус *лучшей* лицензии по адресу: «действующая», если по
-этому адресу есть хоть одна лицензия в силе, «архивная», если нашлись только
-истёкшие, прекращённые или аннулированные.
+```{python}
+# | label: headline-status
+cols = {"Статус": [STATUS_RU[s] for s in STATUS_ORDER]}
+for key, part in (("Alcohol", alc), ("Tobacco", tob), (None, d)):
+    c = status_counts(part)
+    cols[RISK_RU.get(key, "Всего")] = [ru(c[s]) for s in STATUS_ORDER]
+cols["% от всех"] = [pct(status_counts(d)[s], len(d)) for s in STATUS_ORDER]
+table(pd.DataFrame(cols))
+```
+
+«Лицензия по адресу» — любой статус, кроме «нет в реестре»; «своя
+лицензия» — только действующая и архивная. Разница между ними — объекты, у
+которых лицензия по адресу есть, но не их.
 
 ## Что подтверждает найденная лицензия
 
@@ -214,34 +413,31 @@ table(pd.DataFrame(rows))
 # | label: tier-trade
 g = (d.groupby(["risk", "evidence", "trade"])["licence_status"]
      .value_counts().unstack(fill_value=0))
-for c in (mg.STATUS_ACTIVE, mg.STATUS_ARCHIVED, mg.STATUS_NONE):
-    if c not in g.columns:
-        g[c] = 0
-g = g[[mg.STATUS_ACTIVE, mg.STATUS_ARCHIVED, mg.STATUS_NONE]].reset_index()
-g["Всего"] = g[[mg.STATUS_ACTIVE, mg.STATUS_ARCHIVED, mg.STATUS_NONE]].sum(axis=1)
-table(pd.DataFrame({
-    "Слой": g["risk"].map(RISK_RU),
-    "Признак": g["evidence"].map({"Direct": "прямой", "Inferred": "предпол."}),
-    "Торговля": g["trade"].map({"off-trade": "навынос", "on-trade": "общепит"}),
-    "Действ.": [ru(v) for v in g[mg.STATUS_ACTIVE]],
-    "Архивная": [ru(v) for v in g[mg.STATUS_ARCHIVED]],
-    "Нет лицензии": [ru(v) for v in g[mg.STATUS_NONE]],
-    "Всего": [ru(v) for v in g["Всего"]],
-    "% действ.": [pct(a, t) for a, t in zip(g[mg.STATUS_ACTIVE], g["Всего"])],
-}))
+g = g.reindex(columns=STATUS_ORDER, fill_value=0).reset_index()
+g["Всего"] = g[STATUS_ORDER].sum(axis=1)
+out = pd.DataFrame({
+    "Группа": [f"{RISK_RU[r]}, {'прямой' if e == 'Direct' else 'предпол.'}, "
+               f"{'навынос' if t == 'off-trade' else 'общепит'}"
+               for r, e, t in zip(g["risk"], g["evidence"], g["trade"])]})
+for s in STATUS_ORDER:
+    out[STATUS_HDR[s]] = [ru(v) for v in g[s]]
+out["Всего"] = [ru(v) for v in g["Всего"]]
+out["% действ."] = [pct(a, t) for a, t in zip(g[mg.STATUS_ACTIVE], g["Всего"])]
+table_w(out, [20, 9, 9, 9, 8, 8, 9, 7, 8])
 ```
 
 ## Каким путём найдено совпадение
 
+Только объекты со своей лицензией: у остальных выбранной пары нет.
+
 ```{python}
 # | label: route
-m = d[d["licence_status"] != mg.STATUS_NONE]
-g = m.groupby(["licence_match_method", "licence_match_level"]).size().reset_index(name="n")
+g = own.groupby(["licence_match_method", "licence_match_level"]).size().reset_index(name="n")
 table(pd.DataFrame({
     "Маршрут": g["licence_match_method"].map(METHOD_RU),
     "Точность адреса": g["licence_match_level"].map(LEVEL_RU),
     "Записей": [ru(v) for v in g["n"]],
-    "% от сопоставленных": [pct(v, len(m)) for v in g["n"]],
+    "% от своих лицензий": [pct(v, len(own)) for v in g["n"]],
 }))
 ```
 
@@ -257,38 +453,39 @@ table(pd.DataFrame({
 # | label: alcohol-okrug
 off = alc[alc["trade"] == "off-trade"]
 g = off.groupby("district_orig")["licence_status"].value_counts().unstack(fill_value=0)
-for c in (mg.STATUS_ACTIVE, mg.STATUS_ARCHIVED, mg.STATUS_NONE):
-    if c not in g.columns:
-        g[c] = 0
+g = g.reindex(columns=STATUS_ORDER, fill_value=0)
 g = g.reindex([o for o in OKRUG_ORDER if o in g.index])
 tot = g.sum(axis=1)
-table(pd.DataFrame({
-    "Округ": g.index,
-    "Действующая": [ru(v) for v in g[mg.STATUS_ACTIVE]],
-    "Архивная": [ru(v) for v in g[mg.STATUS_ARCHIVED]],
-    "Нет лицензии": [ru(v) for v in g[mg.STATUS_NONE]],
-    "Всего": [ru(v) for v in tot],
-    "% без лицензии": [pct(v, t) for v, t in zip(g[mg.STATUS_NONE], tot)],
-}))
+no_own = g[list(mg.STATUS_NO_OWN)].sum(axis=1)
+out = pd.DataFrame({"Округ": g.index})
+for s in STATUS_ORDER:
+    out[STATUS_HDR[s]] = [ru(v) for v in g[s]]
+out["Всего"] = [ru(v) for v in tot]
+out["% без своей"] = [pct(v, t) for v, t in zip(no_own, tot)]
+table_w(out, [19, 9, 9, 9, 8, 8, 9, 7, 8])
 ```
 
 ## Обратная сторона: какую часть реестра покрывает выгрузка
 
 Строка читается так: из всех городских лицензий данного статуса и вида
-деятельности столько-то имеют объект четвёртой поставки по своему адресу.
-Ключевая строка — действующая розница без общепита.
+деятельности столько-то имеют объект четвёртой поставки по своему адресу
+(«по адресу») и столько-то закреплены за конкретным объектом как его
+собственная точка («за объектом»). Ключевая строка — действующая розница без
+общепита.
 
 ```{python}
 # | label: reverse
 rc = mg.reverse_coverage(d, eg)
 rc = rc[rc["Licences"] > 0]
-table(pd.DataFrame({
+table_w(pd.DataFrame({
     "Статус лицензии": rc["status_en"].map(STATUS_EG_RU),
     "Вид деятельности": rc["activity_class"].map(ACT_RU),
-    "Есть объект": [ru(v) for v in rc["Matched"]],
     "Лицензий": [ru(v) for v in rc["Licences"]],
-    "% покрыто": [ru(v, 1) for v in rc["% matched"]],
-}))
+    "По адресу": [ru(v) for v in rc["Matched"]],
+    "% по адресу": [ru(v, 1) for v in rc["% matched"]],
+    "За объектом": [ru(v) for v in rc["Held"]],
+    "% за объектом": [ru(v, 1) for v in rc["% held"]],
+}), [23, 19, 11, 9, 9, 10, 10])
 ```
 
 ```{python}
@@ -297,65 +494,336 @@ r = rc[(rc["status_en"] == "Active")
        & (rc["activity_class"] == "Retail (off-trade)")].iloc[0]
 display(Markdown(
     f"Из **{ru(r['Licences'])}** действующих розничных лицензий без общепита "
-    f"объект четвёртой поставки стоит по адресу **{ru(r['Matched'])}** "
-    f"({ru(r['% matched'], 1)} %). Это и есть ответ на вопрос о пятикратном "
-    "недоучёте алкоголя в третьей поставке: четвёртая поставка лицензированную "
-    "розницу учитывает."))
+    f"объект четвёртой поставки стоит по адресу у **{ru(r['Matched'])}** "
+    f"({ru(r['% matched'], 1)} %), а своим объектом точка закреплена у "
+    f"**{ru(r['Held'])}** ({ru(r['% held'], 1)} %). "
+    "«По адресу» отвечает на вопрос, есть ли в выгрузке хоть что-то там, где "
+    "стоит лицензированная точка; «за объектом» — досталась ли эта точка "
+    "какому-то объекту как его собственная, и второе всегда не больше первого: "
+    "лицензия, по адресу которой стоит только бар или чужая сеть, в него не "
+    "входит. Первая доля и есть ответ на вопрос о пятикратном недоучёте "
+    "алкоголя в третьей поставке: четвёртая поставка лицензированную розницу "
+    "учитывает."))
 ```
 
-# Алкоголь: объекты без лицензии
+# Вывеска и держатель: выученные пары {#sec-brands}
+
+Реестр называет держателя лицензии, выгрузка — вывеску, и для всего, что
+крупнее одного магазина, эти названия не похожи. Национальные сети сведены
+в справочник вручную (Тандер → «Магнит», Агроторг → «Пятёрочка» и т. д.);
+остальные пары сопоставление находит в самих данных.
+
+Пары выучиваются голосованием по адресам алкогольного слоя. Каждый объект
+сравнивается с лицензиями только по адресу и расстоянию — без названия,
+иначе ответ был бы подсказан. Настоящий держатель вывески стоит почти у
+каждого её адреса, а соседи от адреса к адресу меняются, поэтому в сумме
+по адресам держатель набирает голоса, а соседи — нет. Голос засчитывается,
+только если точка держателя действительно *досталась* объекту в раздаче
+«одна точка — один объект»: киоск внутри супермаркета не голосует за
+лицензию супермаркета. Голоса прочих адресов вывески возвращаются в
+следующий круг как априорная поддержка, но никогда не учитывают собственный
+адрес объекта (пара не может проголосовать сама за себя). Пара принимается,
+если держатель взял не меньше трёх адресов вывески и заметную их долю, и
+встречается у её адресов в несколько раз чаще, чем у адресов вообще
+(«подъём» над базовой частотой — так сеть, стоящая рядом со всеми подряд, не
+приписывается каждой вывеске). Вывеска, которую ни один держатель не
+контролирует большинством, считается франшизой: каждому её оператору
+достаточно меньшей доли.
+
+**Выученная пара — гипотеза с подсчётом за ней, а не факт.** Полная таблица
+кандидатов, включая отвергнутые, — `v4_brand_aliases.csv`; в ней есть столбец
+ручного пересмотра (`review`), которым пару можно отклонить или принять
+вопреки порогам, с обязательной причиной.
+
+```{python}
+# | label: brands-lead
+if br is not None:
+    used = br[br["used"].astype(bool)]
+    n_rev = int(br["review"].fillna("").astype(str).str.strip().ne("").sum())
+    display(Markdown(
+        f"В таблице {ru(len(br))} пар-кандидатов; порогам удовлетворяют "
+        f"{ru(int(br['accepted'].astype(bool).sum()))}, в сопоставлении "
+        f"участвуют **{ru(len(used))}** пар по {ru(used['fascia'].nunique())} "
+        f"вывескам; вручную пересмотрено {ru(n_rev)}."))
+else:
+    display(Markdown(f"Таблица `{BRANDS.name}` не найдена."))
+```
+
+```{python}
+# | label: brands-table
+if br is not None:
+    u = used.sort_values(["sites_assigned", "share"], ascending=False)
+    table_w(pd.DataFrame({
+        "Вывеска": clean(u["fascia"]),
+        "Держатель": clean(u["holder_name"]),
+        "ИНН": u["holder"].astype(str),
+        "Адресов": [ru(v) for v in u["fascia_sites"]],
+        "Взято": [ru(v) for v in u["sites_assigned"]],
+        "Доля": [ru(v, 2) for v in u["share"]],
+        "Подъём": [ru(v, 1) for v in u["lift"]],
+        "Франшиза": ["да" if bool(v) else "" for v in u["franchise"]],
+    }), [13, 18, 13, 10, 7, 7, 9, 12])
+```
+
+«Адресов» — число адресов вывески, «Взято» — у скольких из них точка
+держателя досталась объекту с этой вывеской, «Доля» — их отношение,
+«Подъём» — во сколько раз держатель чаще стоит у адресов вывески, чем у
+адресов вообще.
+
+## Откуда взялась оценка по названию
+
+```{python}
+# | label: name-basis
+vc = own["licence_name_basis"].value_counts()
+table(pd.DataFrame({
+    "Основание": [BASIS_RU[b] for b in BASIS_RU if vc.get(b, 0)],
+    "Записей": [ru(int(vc[b])) for b in BASIS_RU if vc.get(b, 0)],
+    "% своих лицензий": [pct(int(vc[b]), len(own)) for b in BASIS_RU if vc.get(b, 0)],
+}))
+```
+
+```{python}
+# | label: name-low
+s_new = pd.to_numeric(own["licence_name_score"], errors="coerce")
+low_new, sc_new = int((s_new < 0.5).sum()), int(s_new.notna().sum())
+low_mask = (s_new < 0.5) & (own["licence_name_basis"] == mg.NAME_FUZZY)
+low_fuzzy = int(low_mask.sum())
+# How many distinct addresses each fascia has in the whole export: a fascia on
+# one or two addresses can never be learned (the vote needs three).
+fkey = d["name_orig"].fillna("").astype(str).str.split(",").str[0].str.strip().str.lower()
+n_sites = d.assign(_f=fkey).groupby("_f")["site_key"].nunique()
+low_small = int((fkey[own.index][low_mask].map(n_sites) <= 2).sum())
+if old is not None:
+    o = old[old["licence_status"].isin(mg.STATUS_OWN)]
+    s_old = pd.to_numeric(o["licence_name_score"], errors="coerce")
+    low_old, sc_old = int((s_old < 0.5).sum()), int(s_old.notna().sum())
+    before = (f"Раньше оценка по названию была ниже 0,5 у **{ru(low_old)}** из "
+              f"{ru(sc_old)} выбранных пар ({pct(low_old, sc_old)} %); ")
+else:
+    before = ""
+display(Markdown(
+    before + f"теперь — у **{ru(low_new)}** из {ru(sc_new)} оценённых "
+    f"({pct(low_new, sc_new)} %; родовые вывески не оцениваются). "
+    + ("Все они" if low_fuzzy == low_new else
+       f"Из них {ru(low_fuzzy)}")
+    + " — сравнение названий как строк, то "
+    "есть вывеска, для которой ни справочник, ни данные пары не дают, и у "
+    f"{ru(low_small)} из {ru(low_fuzzy)} вывеска стоит в выгрузке не более чем на двух "
+    "адресах. Это одиночные магазины и кафе, чьё юридическое лицо не имеет с "
+    "вывеской ничего общего: «Каргополочка» торгует по лицензии ООО «Бэст "
+    "Прайс», «Генштаб» — ООО «Поморский», и сравнивать эти строки "
+    "бессмысленно. Такой паре низкая оценка по названию положена; она "
+    "проходит за счёт адреса и расстояния, а название весит в сумме лишь "
+    f"{ru(mg.W_NAME, 2)}. Выучить пару для одиночного магазина нельзя: "
+    "голосованию нужно не меньше трёх адресов. Остаток — объекты сетей у "
+    "лицензии другого держателя (табачный киоск в здании чужого магазина, "
+    "точка франчайзи) — стоит просмотреть в первую очередь."))
+```
+
+# Алкоголь: объекты без своей лицензии
 
 ```{python}
 # | label: alcohol-none-lead
+c = status_counts(none_alc)
 display(Markdown(
-    f"Лицензии по адресу нет у **{ru(len(none_alc))}** из {ru(len(alc))} "
-    f"алкогольных записей ({pct(len(none_alc), len(alc))} %). "
+    f"Своей лицензии нет у **{ru(len(none_alc))}** из {ru(len(alc))} "
+    f"алкогольных записей ({pct(len(none_alc), len(alc))} %): у "
+    f"{ru(c[mg.STATUS_NONE])} по адресу нет никакой лицензии, у "
+    f"{ru(c[mg.STATUS_TAKEN])} точка досталась другому объекту, у "
+    f"{ru(c[mg.STATUS_OTHER_TRADE])} по адресу лишь лицензия другого вида, у "
+    f"{ru(c[mg.STATUS_OTHER_CHAIN])} — лицензия другой сети. "
     "Полный перечень — ниже, по округам."))
 ```
 
-Отсутствие лицензии по адресу означает одно из трёх: объект действительно не
-торгует алкоголем и разметка ошибочна; лицензия есть, но записана по другому
-адресу (например, юридическому, а не адресу точки); объект — общепит,
-работающий без собственной лицензии. Разделить эти случаи средствами
-репозитория нельзя, поэтому перечень ниже — список кандидатов на ручную
-проверку, а не список доказанных ошибок.
+Отсутствие своей лицензии означает одно из нескольких: объект действительно
+не торгует алкоголем и разметка ошибочна; лицензия есть, но записана по
+другому адресу (например, юридическому, а не адресу точки); объект — общепит,
+работающий без собственной лицензии; объект — дубль соседа, у которого
+лицензия уже есть. Разделить эти случаи средствами репозитория нельзя,
+поэтому перечень ниже — список кандидатов на ручную проверку, а не список
+доказанных ошибок. Ручная проверка записана в столбце «Я.Карты» — см.
+следующий раздел.
 
 ## Сводка по классам объектов
 
 ```{python}
 # | label: alcohol-none-types
 g = alc.groupby("type_orig")["licence_status"].value_counts().unstack(fill_value=0)
-if mg.STATUS_NONE not in g.columns:
-    g[mg.STATUS_NONE] = 0
-g = g.assign(_n=g[mg.STATUS_NONE], _t=g.sum(axis=1)).sort_values("_n", ascending=False)
-table(pd.DataFrame({
+g = g.reindex(columns=STATUS_ORDER, fill_value=0)
+g = g.assign(_n=g[list(mg.STATUS_NO_OWN)].sum(axis=1),
+             _t=g[STATUS_ORDER].sum(axis=1)).sort_values("_n", ascending=False)
+out = pd.DataFrame({
     "Класс объекта": [TYPE_SHORT.get(i, i) for i in g.index],
     "Признак": ["предпол." if i in v4.INFERRED_TYPES else "прямой" for i in g.index],
-    "Торговля": ["общепит" if i in v4.ON_TRADE_TYPES else "навынос" for i in g.index],
     "Всего": [ru(v) for v in g["_t"]],
-    "Без лицензии": [ru(v) for v in g["_n"]],
-    "% без лицензии": [pct(v, t) for v, t in zip(g["_n"], g["_t"])],
+})
+for s in mg.STATUS_NO_OWN:
+    out[STATUS_HDR[s]] = [ru(v) for v in g[s]]
+out["Без своей"] = [ru(v) for v in g["_n"]]
+out["%"] = [pct(v, t) for v, t in zip(g["_n"], g["_t"])]
+table_w(out, [14, 10, 7, 9, 8, 8, 9, 8, 6])
+```
+
+## Ручная проверка по Яндекс Картам
+
+Реестр ФСРАР отвечает на вопрос о лицензии. Третий справочник отвечает на
+более простой вопрос, который реестр не задаёт вовсе: **стоит ли вообще по
+этому адресу организация с таким названием.** Если объекта нет и на Яндекс
+Картах, строка скорее устарела, чем ставит вопрос о лицензировании.
+
+```{python}
+# | label: yandex-method
+q = none_alc.copy()
+q["ya"] = [ya_mark(k) for k in q["site_key"]]
+n_q = len(q)
+n_read = int((q["ya"] != YA_UNCHECKED).sum())
+dates = sorted({v for v in ya["checked"] if v})
+day = pd.Timestamp(dates[-1]).strftime("%d.%m.%Y") if dates else "—"
+display(Markdown(
+    f"Прочитано **{ru(n_read)}** страниц из {ru(n_q)} объектов очереди, по "
+    f"одной на объект, последний снимок от {day}. Запрос — тот же, что набрал "
+    "бы человек: название, затем адрес, с картой, центрированной на "
+    "координате объекта; ответ прочитан со страницы результатов. В перечне "
+    "ниже метка в столбце «Я.Карты» — это и есть ссылка на запрос, по "
+    "которому она поставлена."
+    + ("" if n_read == n_q else
+       f" Оставшиеся {ru(n_q - n_read)} помечены «не пров.»: страница ещё не "
+       "прочитана или Яндекс не ответил, и такая строка не утверждает "
+       "ничего.")))
+```
+
+Организация засчитывается за объект, только если она стоит не далее
+`{python} ru(yx.NEAR_M)` м от его координаты и названия совпадают
+(`{python} ru(yx.NAME_MIN)` из 100 по ключу названия, из которого выброшен
+родовой хвост: «Казацкая слобода, кафе» → «казацкая слобода»). Родовому
+названию — «Продукты» — этого мало, и для него радиус сужен до
+`{python} ru(yx.GENERIC_M)` м.
+
+* **есть** — организация с тем же названием стоит по этому адресу;
+* **закрыт** — карточка нашлась, но помечена «Больше не работает» или
+  «Временно не работает»;
+* **не опознан** — по адресу организации есть, но название объекта в выгрузке
+  родовое целиком («Столовая», «Кафе»), и сопоставлять по имени нечего;
+* **нет** — ничего похожего по этому адресу;
+* **не пров.** — проверки ещё нет.
+
+**Метка не заменяет лицензию.** Яндекс Карты лицензий не ведут: «есть»
+означает, что объект существует, а не что он торгует алкоголем легально.
+Обратное прочтение — «нет» как доказательство отсутствия объекта — тоже
+неверно: справочник неполон, а снимок сделан в один день.
+
+```{python}
+# | label: yandex-summary
+vc = q["ya"].value_counts()
+table(pd.DataFrame({
+    "Метка": [YA_RU[s] for s in YA_ORDER if vc.get(s, 0)],
+    "Объектов": [ru(int(vc[s])) for s in YA_ORDER if vc.get(s, 0)],
+    "% очереди": [pct(int(vc[s]), n_q) for s in YA_ORDER if vc.get(s, 0)],
 }))
 ```
+
+```{python}
+# | label: yandex-by-status
+g = pd.crosstab(q["licence_status"], q["ya"])
+g = g.reindex(index=[s for s in mg.STATUS_NO_OWN if s in set(q["licence_status"])],
+              columns=YA_ORDER, fill_value=0)
+cols = {"Статус": [STATUS_RU[s] for s in g.index],
+        "Всего": [ru(v) for v in g.sum(axis=1)]}
+for s in YA_ORDER:
+    if int(g[s].sum()):
+        cols[YA_RU[s].capitalize()] = [ru(v) for v in g[s]]
+table(pd.DataFrame(cols))
+```
+
+```{python}
+# | label: yandex-by-type
+g = pd.crosstab(q["type_orig"], q["ya"]).reindex(columns=YA_ORDER, fill_value=0)
+chk = [s for s in YA_ORDER if s != YA_UNCHECKED]
+g = g.assign(_t=g[YA_ORDER].sum(axis=1), _c=g[chk].sum(axis=1)
+             ).sort_values("_t", ascending=False)
+cols = {"Класс объекта": [TYPE_SHORT.get(i, i) for i in g.index],
+        "Всего": [ru(v) for v in g["_t"]]}
+for s in YA_ORDER:
+    if int(g[s].sum()):
+        cols[YA_RU[s].capitalize()] = [ru(v) for v in g[s]]
+cols["% есть"] = [pct(v, t) for v, t in zip(g[yx.STATUS_PRESENT], g["_c"])]
+table(pd.DataFrame(cols))
+```
+
+Доля «есть» считается от проверенных объектов класса, без «не пров.».
 
 ## Перечень объектов
 
 Адреса даны без повторяющегося «Архангельск,». Класс объекта задаёт и степень
 признака: «спец. магазин» и «бар, паб» — прямой признак, «магазин» и «общепит» —
 предполагаемый, то есть тип объекта лишь совместим с продажей алкоголя.
+Столбец «Статус» — почему своей лицензии нет; для статуса «у другого» после
+двоеточия назван объект, которому досталась точка (с адресом, если он не
+совпадает с адресом строки). Метка в столбце «Я.Карты» — ссылка на тот самый
+запрос Яндекс Карт, по которому она поставлена.
 
 ```{python}
 # | label: alcohol-none-list
 # | output: asis
-lst = none_alc.copy()
+LIST_STATUS = {mg.STATUS_TAKEN: "у другого", mg.STATUS_OTHER_CHAIN: "др. сеть",
+               mg.STATUS_OTHER_TRADE: "др. вид", mg.STATUS_NONE: "нет в реестре"}
+
+
+def strip_city(s):
+    return pd.Series(s).astype(str).str.replace(r"^\s*Архангельск,\s*", "",
+                                                regex=True).str.strip().iloc[0]
+
+
+def status_cell(status, claimed, addr):
+    """The status, and for a taken outlet the object that took it."""
+    lab = LIST_STATUS.get(status, status)
+    if status != mg.STATUS_TAKEN or not claimed:
+        return lab
+    name, _, rest = claimed.rpartition(" (")
+    name = (name or claimed).strip()
+    if len(name) > 26:
+        name = name[:25].rstrip() + "…"
+    where = strip_city(rest.rstrip(")")) if rest else ""
+    cell = f"{lab}: {name}" + (f", {where}" if where and where != addr else "")
+    return cell.replace("|", "/")
+
+
+lst = q.copy()
 lst["Название"] = clean(lst["name_orig"])
 lst["Адрес"] = clean(lst["adress_orig"]).str.replace(r"^Архангельск,\s*", "", regex=True)
-lst["Класс объекта"] = lst["type_orig"].map(lambda v: TYPE_SHORT.get(v, v))
+lst["Класс"] = lst["type_orig"].map(lambda v: TYPE_SHORT.get(v, v))
+lst["Статус"] = [status_cell(s, c, a) for s, c, a in
+                 zip(lst["licence_status"], lst["licence_claimed_by"], lst["Адрес"])]
+# The mark *is* the link: a table that has to hold a name, an address and a
+# class cannot also hold a 200-character URL, and the reader needs one click,
+# not the string.  The URL goes in a reference definition rather than in the
+# cell, because LaTeX column widths follow the width of the markdown *source*
+# -- an inline URL in one cell squeezes the other columns to eight characters
+# and hyphenates every address.  A row the check has not reached carries a
+# plain «не пров.» and no link.
+lst["_ref"] = [f"ya{i}" for i in range(1, len(lst) + 1)]
+lst["_url"] = [YA.at[k, "search_url"] if k in YA.index else "" for k in lst["site_key"]]
+lst["Я.Карты"] = [f"[{YA_RU[m]}][{ref}]" if u else YA_RU[m]
+                  for m, u, ref in zip(lst["ya"], lst["_url"], lst["_ref"])]
+LIST_COLS = ["Название", "Адрес", "Класс", "Статус", "Я.Карты"]
+LIST_W = [21, 27, 11, 25, 10]
 for okrug in [o for o in OKRUG_ORDER if o in set(lst["district_orig"])]:
     part = lst[lst["district_orig"] == okrug].sort_values(["Название", "Адрес"])
     print(f"\n### {okrug} — {ru(len(part))}\n")
-    print(part[["Название", "Адрес", "Класс объекта"]]
-          .to_markdown(index=False, disable_numparse=True))
+    print(md_widths(part[LIST_COLS], LIST_W))
+    print()
+    for u, ref in zip(part["_url"], part["_ref"]):
+        if u:
+            print(f"[{ref}]: {u}")
+    print()
+rest = lst[~lst["district_orig"].isin(OKRUG_ORDER)]
+if len(rest):
+    print(f"\n### Округ не указан — {ru(len(rest))}\n")
+    print(md_widths(rest[LIST_COLS], LIST_W))
+    print()
+    for u, ref in zip(rest["_url"], rest["_ref"]):
+        if u:
+            print(f"[{ref}]: {u}")
     print()
 ```
 
@@ -365,14 +833,15 @@ for okrug in [o for o in OKRUG_ORDER if o in set(lst["district_orig"])]:
 # | label: tobacco-lead
 n_prob = int((tob["licence_evidence"] == "probable").sum())
 n_weak = int((tob["licence_evidence"] == "weak").sum())
+n_tob_none = int((tob["licence_status"] == mg.STATUS_NONE).sum())
 display(Markdown(
     "В реестре ФСРАР **нет табачного класса** — он ведёт только алкогольные "
     "лицензии. Табачная запись попадает в него единственным способом: через "
     "алкогольную лицензию по своему же адресу. Поэтому здесь нет ни одной "
     f"«подтверждённой» табачной точки: {ru(n_prob)} записей имеют "
     f"*вероятную* поддержку, {ru(n_weak)} — слабую, а у **{ru(len(none_tob))}** "
-    f"из {ru(len(tob))} ({pct(len(none_tob), len(tob))} %) по адресу нет "
-    "никакой лицензии."))
+    f"из {ru(len(tob))} ({pct(len(none_tob), len(tob))} %) своей лицензии нет; "
+    f"из них у {ru(n_tob_none)} по адресу нет вообще никакой лицензии."))
 ```
 
 ## По классам объектов
@@ -380,33 +849,49 @@ display(Markdown(
 ```{python}
 # | label: tobacco-classes
 g = tob.groupby("type_orig")["licence_evidence"].value_counts().unstack(fill_value=0)
-for c in ("probable", "weak", ""):
-    if c not in g.columns:
-        g[c] = 0
-g = g.assign(_t=g.sum(axis=1)).sort_values("_t", ascending=False)
-table(pd.DataFrame({
+g = g.reindex(columns=["probable", "weak", ""], fill_value=0)
+nr = tob[tob["licence_status"] == mg.STATUS_NONE].groupby("type_orig").size()
+g = g.assign(_t=g.sum(axis=1), _nr=nr.reindex(g.index, fill_value=0)
+             ).sort_values("_t", ascending=False)
+table_w(pd.DataFrame({
     "Класс объекта": [TYPE_SHORT.get(i, i) for i in g.index],
     "Признак": ["предпол." if i in v4.INFERRED_TYPES else "прямой" for i in g.index],
     "Всего": [ru(v) for v in g["_t"]],
     "Вероятное": [ru(v) for v in g["probable"]],
     "Слабое": [ru(v) for v in g["weak"]],
-    "Нет лицензии": [ru(v) for v in g[""]],
-    "% без лицензии": [pct(v, t) for v, t in zip(g[""], g["_t"])],
-}))
+    "Без своей": [ru(v) for v in g[""]],
+    "из них нет в реестре": [ru(v) for v in g["_nr"]],
+    "% без своей": [pct(v, t) for v, t in zip(g[""], g["_t"])],
+}), [18, 10, 7, 11, 9, 8, 10, 8])
 ```
 
-Класс «возможная продажа табака» — это 82 % всей табачной поставки и
-одновременно почти весь её провал по лицензиям: разметка здесь опирается на
-совместимость типа объекта с продажей, а не на наблюдение. Специализированные
-табачные магазины ведут себя иначе — доля адресов без алкогольной лицензии у
-них заметно ниже, что для этого класса ожидаемо. Кальянные выпадают из общей
-картины по обратной причине: алкогольная лицензия для них не нужна, поэтому
-её отсутствие ничего не говорит о продаже табака.
+```{python}
+# | label: tobacco-classes-note
+t_poss = tob[tob["type_orig"] == v4.T_POSSIBLE]
+t_spec = tob[tob["type_orig"] == v4.T_SPECIALISED]
+n_poss_no = int(t_poss["licence_status"].isin(mg.STATUS_NO_OWN).sum())
+tk_spec = int((t_spec["licence_status"] == mg.STATUS_TAKEN).sum())
+tk_poss = int((t_poss["licence_status"] == mg.STATUS_TAKEN).sum())
+display(Markdown(
+    f"Класс «возможная продажа табака» — это {pct(len(t_poss), len(tob), 0)} % "
+    f"всей табачной поставки и {pct(n_poss_no, len(none_tob), 0)} % её записей "
+    "без своей лицензии: разметка здесь опирается на совместимость типа объекта "
+    "с продажей, а не на наблюдение. Специализированные табачные магазины "
+    "остаются без своей лицензии чаще, но по другой причине: у "
+    f"{pct(tk_spec, len(t_spec), 0)} % из них точка по адресу досталась "
+    "другой табачной записи (у класса «возможная продажа» — "
+    f"{pct(tk_poss, len(t_poss), 0)} %). Табачная лавка стоит в здании "
+    "магазина, который сам размечен в табачном слое как «возможная продажа», "
+    "и точка его алкогольной лицензии досталась ему, а не лавке — лавке своя "
+    "алкогольная лицензия и не нужна. Кальянные выпадают из общей картины по "
+    "той же причине: алкогольная лицензия для них не обязательна, поэтому её "
+    "отсутствие ничего не говорит о продаже табака."))
+```
 
-## Без лицензии — по классам и округам
+## Без своей лицензии — по классам и округам
 
-Столбец «% округа» — доля табачных записей округа, оставшихся без какой-либо
-лицензии по адресу.
+Столбец «% округа» — доля табачных записей округа, оставшихся без своей
+лицензии.
 
 ```{python}
 # | label: tobacco-classes-okrug
@@ -425,7 +910,7 @@ for c, label in SHORT.items():
 out["Всего"] = [ru(v) for v in g.sum(axis=1)]
 out["% округа"] = [pct(v, tot_tob.get(o, 0))
                    for o, v in zip(g.index, g.sum(axis=1))]
-table(out)
+table_w(out, [20, 11, 10, 8, 11, 7, 8])
 ```
 
 # Что из этого следует
@@ -434,22 +919,48 @@ table(out)
 # | label: conclusions
 n_off = int((alc["trade"] == "off-trade").sum())
 n_off_none = int(((alc["trade"] == "off-trade")
-                  & (alc["licence_status"] == mg.STATUS_NONE)).sum())
+                  & (alc["licence_status"].isin(mg.STATUS_NO_OWN))).sum())
 cov = rc[(rc["status_en"] == "Active")
-         & (rc["activity_class"] == "Retail (off-trade)")]["% matched"].iloc[0]
+         & (rc["activity_class"] == "Retail (off-trade)")].iloc[0]
+alc_own = int(alc["licence_status"].isin(mg.STATUS_OWN).sum())
+alc_addr = int((alc["licence_status"] != mg.STATUS_NONE).sum())
+vc = q["ya"].value_counts()
+n_unc = int(vc.get(YA_UNCHECKED, 0))
 display(Markdown("\n".join([
-    f"* **Алкоголь проверяем, и проверку проходит.** {pct(len(alc) - len(none_alc), len(alc))} % "
-    "записей имеют лицензию по адресу, а с обратной стороны выгрузка покрывает "
-    f"{ru(cov, 1)} % действующих розничных лицензий без общепита.",
-    f"* **Без лицензии остаются {ru(len(none_alc))} алкогольных объектов**, из них "
-    f"{ru(n_off_none)} — магазины (при {ru(n_off)} записях о продаже навынос). "
+    f"* **Алкоголь проверяем, и проверку проходит.** У {pct(alc_addr, len(alc))} % "
+    f"алкогольных записей лицензия по адресу есть, своя — у "
+    f"{pct(alc_own, len(alc))} %; с обратной стороны выгрузка стоит по адресу "
+    f"{ru(cov['% matched'], 1)} % действующих розничных лицензий без общепита, "
+    f"а своим объектом закреплены {ru(cov['% held'], 1)} %.",
+    "* **Одна лицензия больше не приписывается многим объектам.** Точка "
+    "достаётся одному объекту слоя, лицензия должна разрешать его вид торговли, "
+    "а известные сети не могут занять чужую лицензию. Разница между «лицензия "
+    "по адресу» и «своя лицензия» — это соседи, дубли и объекты не того вида "
+    "торговли, а не новые пропуски.",
+    f"* **Без своей лицензии остаются {ru(len(none_alc))} алкогольных объектов**, "
+    f"из них {ru(n_off_none)} — продажа навынос (при {ru(n_off)} таких записях). "
     "Это кандидаты на ручную проверку, а не доказанные ошибки разметки.",
+    f"* **Ручная проверка по Яндекс Картам:** из {ru(n_q)} объектов очереди "
+    f"у {ru(int(vc.get(yx.STATUS_PRESENT, 0)))} карточка на картах есть; у "
+    f"{ru(int(vc.get(yx.STATUS_CLOSED, 0)))} она помечена «Больше не работает»; "
+    f"{ru(int(vc.get(yx.STATUS_AMBIGUOUS, 0)))} не опознаются из-за родового "
+    f"названия; {ru(int(vc.get(yx.STATUS_ABSENT, 0)))} не нашлись вовсе"
+    + (f"; {ru(n_unc)} ещё не проверены" if n_unc else "") + ". "
+    "«Не опознан» и «нет» — первоочередная очередь на выездную проверку: по "
+    "ним нет ни своей лицензии, ни подтверждения в третьем справочнике.",
+    f"* **{pct(int(vc.get(yx.STATUS_CLOSED, 0)), n_q - n_unc)} % проверенной "
+    "очереди — закрывшиеся объекты.** Это частый ответ на вопрос, почему "
+    "лицензия не нашлась: точки уже нет. Такая строка — не ошибка разметки, а "
+    "устаревшая запись, и считать её действующим объектом городской "
+    "инфраструктуры нельзя.",
     "* **Табачный слой ничем в этом репозитории не проверяется.** Реестр ведёт "
     "алкоголь; совпадение по адресу говорит лишь о том, что по этому адресу "
     "легально торгуют алкоголем. Долю «вероятных» нельзя публиковать как долю "
     "подтверждённых табачных точек.",
-    f"* **{ru(len(none_tob))} табачных записей не имеют по адресу даже алкогольной "
-    "лицензии**, и почти все они — класс «возможная продажа табака», самый "
-    "слабый в поставке. Внешней проверки для него не существует вовсе.",
+    f"* **{ru(len(none_tob))} табачных записей не имеют своей алкогольной "
+    f"лицензии** (у {ru(n_tob_none)} по адресу нет вообще никакой), и "
+    f"{pct(n_poss_no, len(none_tob), 0)} % из них — класс «возможная продажа "
+    "табака», самый слабый в поставке. Внешней проверки для него не "
+    "существует вовсе.",
 ])))
 ```

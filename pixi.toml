@@ -28,6 +28,8 @@ match-2022 = { cmd = "python scripts/match_2022.py", description = "Run the inde
 eda-egais = { cmd = "quarto render analysis/egais/eda-egais.qmd --to pdf --output-dir ../../reports/egais", description = "Render the FSRAR licence-registry EDA -> reports/egais/eda-egais.pdf" }
 parse-egais = { cmd = "python scripts/parse_egais.py", description = "Stream the 10.9 GB FSRAR licence registry -> data/processed/egais_licences_arkhangelsk.tsv" }
 match-egais-v4 = { cmd = "python scripts/match_egais_v4.py", description = "Match data/raw_v4 against the licence registry -> data/processed/v4_licences.csv" }
+check-yandex = { cmd = "python scripts/check_yandex_v4.py", description = "Check the v4 alcohol objects holding no licence of their own against Yandex Maps -> data/processed/v4_alcohol_none_yandex.csv" }
+export-licences = { cmd = "python scripts/export_licences_v4.py", description = "Build the four deliverable licence spreadsheets -> data/processed/v4_licences_*.xlsx, v4_alcohol_no_licence.xlsx, v4_brand_aliases.xlsx" }
 licmatch-test = { cmd = "python packages/licmatch/run_tests.py", description = "Run the licmatch (address-level record linkage) test suite" }
 build-taxonomy = { cmd = "python scripts/build_taxonomy_2022.py", description = "Write the seven independent 2022-class flags for the v3 export -> data/processed/taxonomy_2022.csv" }
 validate-taxonomy = { cmd = "python scripts/validate_taxonomy_2022.py", description = "Score the 2022-class flags against the 2022 benchmark on the linked rows" }
