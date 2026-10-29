@@ -25,8 +25,7 @@ lang: en
 format:
   pdf:
     pdf-engine: xelatex
-    mainfont: "Arial"
-    monofont: "Consolas"'''
+    include-in-header: ../_fonts.tex'''
 FRONT_NEW = '''title: "Городская инфраструктура Архангельска — РАД третьей поставки"
 subtitle: "Общегородская выгрузка 2026, перекодировка в таксономию 2022, коммерческий справочник, панель показателей ARKTMED (2026-08-31)"
 author: "СГМУ — проект по городской инфраструктуре"
@@ -35,9 +34,7 @@ lang: ru
 format:
   pdf:
     pdf-engine: xelatex
-    mainfont: "Arial"
-    sansfont: "Arial"
-    monofont: "Consolas"'''
+    include-in-header: ../_fonts.tex'''
 
 # ------------------------------------------------------- captions (fig / tbl)
 CAPTIONS = {

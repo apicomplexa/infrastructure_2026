@@ -7,8 +7,7 @@ lang: en
 format:
   pdf:
     pdf-engine: xelatex
-    mainfont: "Arial"
-    monofont: "Consolas"
+    include-in-header: ../_fonts.tex
     toc: true
     toc-depth: 2
     number-sections: true

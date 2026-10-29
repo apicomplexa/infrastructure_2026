@@ -23,8 +23,7 @@ lang: en
 format:
   pdf:
     pdf-engine: xelatex
-    mainfont: "Arial"
-    monofont: "Consolas"'''
+    include-in-header: ../_fonts.tex'''
 FRONT_NEW = '''title: "Городская инфраструктура Архангельска — коммерческий справочник как третий источник"
 subtitle: "Профиль export_base_688669 и повторное сопоставление с выгрузкой 2026 года и эталоном 2022 года (2026-08-31)"
 author: "СГМУ — проект по городской инфраструктуре"
@@ -33,9 +32,7 @@ lang: ru
 format:
   pdf:
     pdf-engine: xelatex
-    mainfont: "Arial"
-    sansfont: "Arial"
-    monofont: "Consolas"'''
+    include-in-header: ../_fonts.tex'''
 
 CAPTIONS = {
     "The commercial directory at a glance.":

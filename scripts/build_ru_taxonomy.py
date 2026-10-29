@@ -23,8 +23,7 @@ lang: en
 format:
   pdf:
     pdf-engine: xelatex
-    mainfont: "Arial"
-    monofont: "Consolas"'''
+    include-in-header: ../_fonts.tex'''
 FRONT_NEW = '''title: "Городская инфраструктура Архангельска — таксономия 2022 года как семь списков"
 subtitle: "Исправленное правило множественной принадлежности поверх общегородской выгрузки и честный отчёт о том, чем оно проверено"
 author: "СГМУ — проект по городской инфраструктуре"
@@ -33,9 +32,7 @@ lang: ru
 format:
   pdf:
     pdf-engine: xelatex
-    mainfont: "Arial"
-    sansfont: "Arial"
-    monofont: "Consolas"'''
+    include-in-header: ../_fonts.tex'''
 
 CAPTIONS = {
     "Class counts before and after. Seven independent flags, so an object may appear in more than one bar; the old rule's bars are mutually exclusive by construction.":

@@ -23,8 +23,7 @@ lang: en
 format:
   pdf:
     pdf-engine: xelatex
-    mainfont: "Arial"
-    monofont: "Consolas"'''
+    include-in-header: ../_fonts.tex'''
 FRONT_NEW = '''title: "Городская инфраструктура Архангельска — разведочный анализ четвёртой поставки"
 subtitle: "Слои риска по алкоголю и табаку в сверке с исследованием 2022 года и реестром лицензий ФСРАР"
 author: "СГМУ — проект по городской инфраструктуре"
@@ -33,9 +32,7 @@ lang: ru
 format:
   pdf:
     pdf-engine: xelatex
-    mainfont: "Arial"
-    sansfont: "Arial"
-    monofont: "Consolas"'''
+    include-in-header: ../_fonts.tex'''
 
 CAPTIONS = {
     "Column schema against the third delivery. Names, order and inferred dtypes all agree.":

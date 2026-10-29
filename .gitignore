@@ -19,6 +19,7 @@
 **/*_files/
 *.quarto_ipynb
 /analysis/**/*.tex
+!/analysis/_fonts.tex
 /analysis/**/*.aux
 /analysis/**/*.log
 /analysis/**/*.toc

@@ -1,0 +1,8 @@
+% Fonts with Cyrillic coverage on every platform: Arial / Consolas where they
+% exist (Windows), their metric-compatible Liberation twins elsewhere (Linux).
+\IfFontExistsTF{Arial}{%
+  \setmainfont{Arial}\setsansfont{Arial}%
+}{%
+  \setmainfont{Liberation Sans}\setsansfont{Liberation Sans}%
+}
+\IfFontExistsTF{Consolas}{\setmonofont{Consolas}}{\setmonofont{Liberation Mono}}

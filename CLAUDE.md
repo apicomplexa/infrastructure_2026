@@ -101,7 +101,7 @@ different (Russian) column schema — the `load_dataset()` loader in
 recodes objects into the 2022 seven-class health taxonomy (see `recode_2022()`).
 - `pixi run python <script>` — run any Python in the env
 
-PDF rendering needs a system LaTeX install (built with MiKTeX on Windows).
+PDF rendering needs a system LaTeX install (MiKTeX on Windows, TinyTeX on Linux).
 The workspace declares `win-64` and `linux-64`; the lock covers both.
 
 ## Data conventions
@@ -142,11 +142,15 @@ The workspace declares `win-64` and `linux-64`; the lock covers both.
 
 - Charts embed in the PDF as images, so keep Cyrillic figure labels in a font
   with Cyrillic coverage — **DejaVu Sans** (matplotlib default) works.
-- Body text and LaTeX tables use the `Arial` main font (set in the qmd front
-  matter) for Cyrillic. Titles/headings use the **sans** font (KOMA class), which
-  by default lacks Cyrillic — for Cyrillic titles also set `sansfont: "Arial"`
-  (done in `eda-ru.qmd`); with the default sans, keep `title`/`subtitle`
-  ASCII-only.
+- **Fonts come from `analysis/_fonts.tex`**, pulled in by every report with
+  `include-in-header: ../_fonts.tex` — never set `mainfont` / `sansfont` /
+  `monofont` in a front matter. It picks Arial (main + sans) and Consolas (mono)
+  where they exist (Windows) and their metric-compatible Liberation Sans /
+  Liberation Mono elsewhere: Fedora has neither Arial nor Consolas, and fontspec
+  looks fonts up by exact name, so a fontconfig alias does not help. All four
+  cover Cyrillic, which the defaults do not — the KOMA sans (titles/headings)
+  and the default mono both drop Cyrillic glyphs silently. The `mktextfm Arial`
+  lines in a Linux render log are the existence probe, not an error.
 - Figures are pinned with `fig-pos: "H"`: floating figures corrupt `longtable`
   page-breaking (rows silently clipped past the page bottom).
 - Wide tables (many columns) must be emitted as **markdown** (`to_markdown()`,
@@ -175,8 +179,7 @@ deliberately no Russian twin for this report):
 `eda-v2.qmd` reuses `recode_2022()` verbatim from `eda.qmd` — **keep the two
 copies in sync** so the reports stay comparable.
 
-Cyrillic in inline code/verbatim needs `monofont: "Consolas"` in the front
-matter; without it the default mono font silently drops Cyrillic glyphs.
+Cyrillic in inline code/verbatim needs the mono font `_fonts.tex` sets.
 Pandoc pipe tables cannot hold line breaks (`
 ewline` and `<br>` are both
 dropped on the way to LaTeX) — use a list instead.
@@ -226,8 +229,8 @@ Reports and helpers:
   (`pixi run eda-v3-ru` / `eda-v3-val-ru` / `eda-v3-all-ru`). **Only the prose
   and the figure/table captions are translated** — every `{python}` cell is
   byte-identical to the English source, so the rendered tables and charts stay in
-  English. Their front matter needs `sansfont: "Arial"` (KOMA sans has no
-  Cyrillic); their code cells need no adjustment at all, since the setup-cell
+  English. Their front matter takes its fonts from `_fonts.tex` like every
+  other report; their code cells need no adjustment at all, since the setup-cell
   bootstrap locates the repository root on its own.
   All three v3 reports have a Russian twin, the basecheck one included
   (`pixi run eda-v3-base-ru`), as does the v4 report.
@@ -265,8 +268,8 @@ are used together, and `eda-v4.qmd` loads both.
 - `analysis/v4/eda-v4.qmd` → `reports/v4/eda-v4.pdf` (`pixi run eda-v4`), with
   the Russian twin `eda-v4-ru.qmd` → `eda-v4-ru.pdf` (`pixi run eda-v4-ru`).
   Same rule as the v3 twins: **prose and captions only** are translated, every
-  `{python}` cell is byte-identical, and the front matter needs
-  `sansfont: "Arial"`. `scripts/build_ru_v4.py` regenerates it — after editing
+  `{python}` cell is byte-identical, and the fonts come from `_fonts.tex`.
+  `scripts/build_ru_v4.py` regenerates it — after editing
   the English source, re-run `pixi run build-ru` rather than hand-patching the
   twin, and add any new prose block to its translation map.
 - `src/arkhinfra/v4_common.py` — loaders, evidence/trade tiers, the corrected
