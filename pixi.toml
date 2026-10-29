@@ -6,43 +6,28 @@ platforms = ["win-64", "linux-64"]
 version = "0.1.0"
 
 [tasks]
-eda = { cmd = "quarto render analysis/v1/eda.qmd --to pdf --output-dir ../../reports/v1", description = "Render the EDA report (full enriched export) to reports/v1/eda.pdf" }
-eda-health = { cmd = "quarto render analysis/v1/eda.qmd --to pdf -P dataset:health --output-dir ../../reports/v1 && mv reports/v1/eda.pdf reports/v1/eda-health.pdf", description = "Render the EDA report for the health & risk subset to reports/v1/eda-health.pdf" }
-eda-all = { cmd = "quarto render analysis/v1/eda.qmd --to pdf -P dataset:health --output-dir ../../reports/v1 && mv reports/v1/eda.pdf reports/v1/eda-health.pdf && quarto render analysis/v1/eda.qmd --to pdf --output-dir ../../reports/v1", description = "Render both EDA PDFs (enriched + health)" }
-eda-ru = { cmd = "quarto render analysis/v1/eda-ru.qmd --to pdf --output-dir ../../reports/v1", description = "Render the Russian EDA report (full enriched export) to reports/v1/eda-ru.pdf" }
-eda-health-ru = { cmd = "quarto render analysis/v1/eda-ru.qmd --to pdf -P dataset:health --output-dir ../../reports/v1 && mv reports/v1/eda-ru.pdf reports/v1/eda-health-ru.pdf", description = "Render the Russian EDA report for the health & risk subset to reports/v1/eda-health-ru.pdf" }
-eda-all-ru = { cmd = "quarto render analysis/v1/eda-ru.qmd --to pdf -P dataset:health --output-dir ../../reports/v1 && mv reports/v1/eda-ru.pdf reports/v1/eda-health-ru.pdf && quarto render analysis/v1/eda-ru.qmd --to pdf --output-dir ../../reports/v1", description = "Render both Russian EDA PDFs (enriched + health)" }
-eda-v2 = { cmd = "quarto render analysis/v2/eda-v2.qmd --to pdf --output-dir ../../reports/v2", description = "Render the second-delivery EDA (data/raw_v2) to reports/v2/eda-v2.pdf" }
-eda-v3 = { cmd = "quarto render analysis/v3/eda-v3.qmd --to pdf --output-dir ../../reports/v3", description = "Render the third-delivery descriptive EDA (data/raw_v3) to reports/v3/eda-v3.pdf" }
-eda-v3-val = { cmd = "quarto render analysis/v3/eda-v3-validation.qmd --to pdf --output-dir ../../reports/v3", description = "Render the independent 2022-benchmark validation report to reports/v3/eda-v3-validation.pdf" }
-eda-v3-all = { cmd = "quarto render analysis/v3/eda-v3.qmd --to pdf --output-dir ../../reports/v3 && quarto render analysis/v3/eda-v3-validation.qmd --to pdf --output-dir ../../reports/v3", description = "Render both third-delivery reports" }
-eda-v3-base = { cmd = "quarto render analysis/v3/eda-v3-basecheck.qmd --to pdf --output-dir ../../reports/v3", description = "Render the commercial-directory (export_base) source check -> reports/v3/eda-v3-basecheck.pdf" }
-eda-v3-ru = { cmd = "quarto render analysis/v3/eda-v3-ru.qmd --to pdf --output-dir ../../reports/v3", description = "Render the Russian third-delivery report -> reports/v3/eda-v3-ru.pdf" }
-eda-v3-val-ru = { cmd = "quarto render analysis/v3/eda-v3-validation-ru.qmd --to pdf --output-dir ../../reports/v3", description = "Render the Russian validation report -> reports/v3/eda-v3-validation-ru.pdf" }
-eda-v3-all-ru = { cmd = "quarto render analysis/v3/eda-v3-ru.qmd --to pdf --output-dir ../../reports/v3 && quarto render analysis/v3/eda-v3-validation-ru.qmd --to pdf --output-dir ../../reports/v3", description = "Render both Russian third-delivery reports" }
-eda-v3-base-ru = { cmd = "quarto render analysis/v3/eda-v3-basecheck-ru.qmd --to pdf --output-dir ../../reports/v3", description = "Render the Russian commercial-directory source check -> reports/v3/eda-v3-basecheck-ru.pdf" }
-eda-v4 = { cmd = "quarto render analysis/v4/eda-v4.qmd --to pdf --output-dir ../../reports/v4", description = "Render the fourth-delivery risk-layer EDA (data/raw_v4) -> reports/v4/eda-v4.pdf" }
-eda-v4-ru = { cmd = "quarto render analysis/v4/eda-v4-ru.qmd --to pdf --output-dir ../../reports/v4", description = "Render the Russian fourth-delivery report -> reports/v4/eda-v4-ru.pdf" }
-licences-v4-ru = { cmd = "quarto render analysis/v4/licences-v4-ru.qmd --to pdf --output-dir ../../reports/v4", description = "Render the Russian licence-match report (reads data/processed/v4_licences/v4_licences.csv) -> reports/v4/licences-v4-ru.pdf" }
-validation-final-ru = { cmd = "quarto render analysis/final/validation-final-ru.qmd --to pdf --output-dir ../../reports/final", description = "Render the Russian final-delivery validation report (reads data/processed/final_confirm/) -> reports/final/validation-final-ru.pdf" }
+# Reports: one task for every PDF. `pixi run render` lists them; name a report
+# (eda-v4), a delivery directory (v3) or `all`, optionally `--lang ru`.
+render = { cmd = "python scripts/render.py", description = "Render reports to reports/<delivery>/*.pdf: `render` lists them, `render eda-v4 v3 all --lang ru`" }
+build-ru = { cmd = "python scripts/build_ru_v3.py && python scripts/build_ru_basecheck.py && python scripts/build_ru_v4.py && python scripts/ru_numfmt.py", description = "Regenerate the Russian v3/v4 twins from the English sources, then normalise their number formatting" }
+
+# 2022 benchmark and taxonomy (third delivery)
 match-2022 = { cmd = "python scripts/match_2022.py", description = "Run the independent 2022 <-> v3 record matcher; writes data/processed/match_2022/match_2022_*.csv" }
-eda-egais = { cmd = "quarto render analysis/egais/eda-egais.qmd --to pdf --output-dir ../../reports/egais", description = "Render the FSRAR licence-registry EDA -> reports/egais/eda-egais.pdf" }
+build-taxonomy = { cmd = "python scripts/build_taxonomy_2022.py", description = "Write the seven independent 2022-class flags for the v3 export -> data/processed/taxonomy_2022/taxonomy_2022.csv" }
+
+# Licence registry and the fourth delivery
 parse-egais = { cmd = "python scripts/parse_egais.py", description = "Stream the 10.9 GB FSRAR licence registry -> data/processed/egais/egais_licences_arkhangelsk.tsv" }
 match-egais-v4 = { cmd = "python scripts/match_egais_v4.py", description = "Match data/raw_v4 against the licence registry -> data/processed/v4_licences/v4_licences.csv" }
 check-yandex = { cmd = "python scripts/check_yandex_v4.py", description = "Check the v4 alcohol objects holding no licence of their own against Yandex Maps -> data/processed/v4_yandex/v4_alcohol_none_yandex.csv" }
 export-licences = { cmd = "python scripts/export_licences_v4.py", description = "Build the four deliverable licence spreadsheets -> data/processed/deliverables/v4_licences_*.xlsx, v4_alcohol_no_licence.xlsx, v4_brand_aliases.xlsx" }
+licmatch-test = { cmd = "python packages/licmatch/run_tests.py", description = "Run the licmatch (address-level record linkage) test suite" }
+
+# Final delivery
 parse-egais-final = { cmd = "python scripts/parse_egais.py --settlements архангельск северодвинск новодвинск", description = "Stream the licence registry (ZIP) for the three final-delivery cities -> data/processed/egais/egais_licences_final.tsv" }
 match-egais-final = { cmd = "python scripts/match_egais_final.py", description = "Final-delivery catering objects vs in-force catering licences -> data/processed/final_egais/final_egais.csv" }
 fetch-overture = { cmd = "python scripts/fetch_overture.py", description = "Download Overture Maps Places around Arkhangelsk / Severodvinsk / Novodvinsk -> data/raw_alter_overture/overture_places_<release>.parquet" }
 fetch-foursquare = { cmd = "python scripts/fetch_foursquare.py", description = "Download FSQ OS Places (gated HF dataset; needs a saved HF token) around the three cities -> data/raw_alter_foursquare/fsq_places_<release>.parquet" }
 confirm-final = { cmd = "python scripts/confirm_final.py", description = "Add the «Подтверждено» column (2+ independent sources) to data/raw_final/*.xlsx -> data/processed/final_confirm/*_подтверждено.xlsx; --yandex to query Yandex Maps" }
-licmatch-test = { cmd = "python packages/licmatch/run_tests.py", description = "Run the licmatch (address-level record linkage) test suite" }
-build-taxonomy = { cmd = "python scripts/build_taxonomy_2022.py", description = "Write the seven independent 2022-class flags for the v3 export -> data/processed/taxonomy_2022/taxonomy_2022.csv" }
-validate-taxonomy = { cmd = "python scripts/validate_taxonomy_2022.py", description = "Score the 2022-class flags against the 2022 benchmark on the linked rows" }
-audit-sample = { cmd = "python scripts/audit_sample_2022.py", description = "Draw the stratified manual-audit sample over the unlabelled rows" }
-review-queue = { cmd = "python scripts/review_queue_2022.py", description = "Build the manual-review queue from the `name`-evidence rows" }
-profile = { cmd = "python scripts/profile_data.py", description = "Print a quick profile of the enriched dataset" }
-build-ru = { cmd = "python scripts/build_ru_v3.py && python scripts/build_ru_basecheck.py && python scripts/build_ru_v4.py && python scripts/ru_numfmt.py", description = "Regenerate the Russian v3/v4 twins from the English sources, then normalise their number formatting" }
 
 [dependencies]
 python = ">=3.14.6,<3.15"

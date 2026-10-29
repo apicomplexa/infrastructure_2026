@@ -217,8 +217,8 @@ not report it per okrug**; the caveat predates this module and this module does 
 fix it — it only makes it visible in the data instead of in a footnote.
 
 The practical rule: a headline count may be quoted from `category` + `type`
-evidence; `name` evidence belongs in a manual-review queue (`pixi run
-review-queue`), and any figure that mixes the two must say so.
+evidence; `name` evidence belongs in a manual-review queue (`pixi run python
+scripts/review_queue_2022.py`), and any figure that mixes the two must say so.
 
 ## The guard
 

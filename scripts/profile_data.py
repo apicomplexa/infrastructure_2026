@@ -1,6 +1,6 @@
 """Quick profile of the enriched Arkhangelsk infrastructure export.
 
-Run with:  pixi run profile
+Run with:  pixi run python scripts/profile_data.py
 Writes nothing; prints a compact summary to stdout (UTF-8).
 """
 from pathlib import Path

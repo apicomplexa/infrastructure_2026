@@ -31,7 +31,7 @@ jupyter: python3
 # | tags: [parameters]
 # Какой набор данных анализировать: "enriched" (полная городская выгрузка)
 # или "health" (подвыборка «здоровье и риски»). Переопределение:
-#   pixi run eda-health-ru
+#   pixi run render eda-health-ru
 dataset = "enriched"
 ```
 
@@ -218,7 +218,7 @@ DS_LABEL = meta["label"]
 ## Анализируемый набор: **`{python} DS_LABEL`** — `{python} fmt(n_obj)` объектов
 `enriched` = полная городская опись · `health` = объекты, предварительно
 отфильтрованные до инфраструктуры здоровья и факторов риска. Другой вариант:
-`pixi run eda-health-ru`.
+`pixi run render eda-health-ru`.
 :::
 
 ```{python}

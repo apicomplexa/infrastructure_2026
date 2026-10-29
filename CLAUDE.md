@@ -45,18 +45,20 @@ Dependencies are managed with **pixi** (conda-forge). There is no system Python 
 always run tools through pixi:
 
 - `pixi install` — create the env from `pixi.lock`
-- `pixi run eda` — render the enriched report → `reports/v1/eda.pdf` (Quarto + XeLaTeX)
-- `pixi run eda-health` — render the health-subset report → `reports/v1/eda-health.pdf`
-- `pixi run eda-all` — render both
-- `pixi run eda-ru` / `eda-health-ru` / `eda-all-ru` — same reports in Russian
-  (`analysis/v1/eda-ru.qmd` → `eda-ru.pdf` / `eda-health-ru.pdf`)
-- `pixi run eda-v2` — render the second-delivery report → `reports/v2/eda-v2.pdf`
+- `pixi run render <report|delivery|all> [--lang en|ru] [-n]` — **every** PDF
+  report (Quarto + XeLaTeX): `analysis/<d>/<name>.qmd` → `reports/<d>/<name>.pdf`,
+  where a report is named by its source's stem (`eda-v4`, `eda-v3-validation-ru`)
+  and a delivery directory (`v1`, `v3`, `final`, …) selects all of its reports.
+  `pixi run render` with no argument lists them; `-n` prints the quarto commands
+  only. New `.qmd` files are picked up without a task. `eda-health` /
+  `eda-health-ru` are `eda.qmd` / `eda-ru.qmd` rendered with
+  `-P dataset:health` (`VARIANTS` in `scripts/render.py`). `render all` and
+  `render v3` re-render the v3 reports — see the taxonomy re-cut before doing so
 - `pixi run build-ru` — regenerate the Russian v3 and v4 twins from the English
   sources and normalise their numbers (the `build_ru_*` → `ru_numfmt` sequence
   in one go)
 - `pixi run parse-egais` — stream the 10.9 GB FSRAR licence registry into
   `data/processed/egais/egais_licences_arkhangelsk.tsv` (~6 min)
-- `pixi run eda-egais` — render the licence-registry report → `reports/egais/eda-egais.pdf`
 - `pixi run match-egais-v4` — join `data/raw_v4/` to the licence registry →
   `data/processed/v4_licences/v4_licences.csv` (+ `_summary.txt`); `--calibrate` appends the
   threshold ladder
@@ -67,13 +69,10 @@ always run tools through pixi:
   join → `data/processed/deliverables/v4_licences_{alcohol,tobacco}_matched.xlsx`,
   `v4_alcohol_no_licence.xlsx` and `v4_brand_aliases.xlsx`; refuses to write if
   the re-run disagrees with `v4_licences.csv`
-- `pixi run eda-v4` / `eda-v4-ru` — render the fourth-delivery risk-layer report
-  → `reports/v4/eda-v4.pdf` (and its Russian twin)
 - `pixi run build-taxonomy` — re-cut the v3 export into seven independent 2022
   classes → `data/processed/taxonomy_2022/taxonomy_2022.csv` (+ `_summary.txt`)
 - `pixi run licmatch-test` — run the 130 unit tests of the record-linkage package
   (stdlib unittest; no data needed)
-- `pixi run profile` — quick dataset profile
 - `pixi run parse-egais-final` — the same streaming pass over the registry for
   the three final-delivery cities → `data/processed/egais/egais_licences_final.tsv`
   (3,420 rows, same 27 columns; its Arkhangelsk rows equal the city TSV). The
@@ -85,9 +84,7 @@ always run tools through pixi:
 - `pixi run fetch-foursquare` — FSQ OS Places snapshot for the three cities →
   `data/raw_alter_foursquare/fsq_places_<release>.parquet` (needs a saved
   Hugging Face token; the dataset is gated)
-- `pixi run validation-final-ru` — render the Russian report on the final
-  delivery's data quality and the confirmation method →
-  `reports/final/validation-final-ru.pdf`; reads `data/processed/final_confirm/`,
+- `pixi run render validation-final-ru` reads `data/processed/final_confirm/` and
   re-runs nothing. Its flowcharts are `{mermaid}` blocks, so the PDF build also
   needs a Chrome/Chromium Quarto can find (`quarto install chromium` on Linux)
 - `pixi run confirm-final` — add «Подтверждено» / «Основания» to the final
@@ -200,10 +197,10 @@ withdrawn. Three files, analysed by two English-only reports:
 
 Reports and helpers:
 
-- `analysis/v3/eda-v3.qmd` → `reports/v3/eda-v3.pdf` (`pixi run eda-v3`) — descriptive EDA:
+- `analysis/v3/eda-v3.qmd` → `reports/v3/eda-v3.pdf` (`pixi run render eda-v3`) — descriptive EDA:
   provenance, raw groups, 2022 recoding, maps, the commercial dump, ARKTMED.
 - `analysis/v3/eda-v3-validation.qmd` → `reports/v3/eda-v3-validation.pdf`
-  (`pixi run eda-v3-val`) — independent re-check against the 2022 benchmark.
+  (`pixi run render eda-v3-validation`) — independent re-check against the 2022 benchmark.
 - `src/arkhinfra/v3_common.py` — **shared** loaders, normalisers and `recode_2022()`
   for both reports. Import it rather than copying code.
 - `src/arkhinfra/match_2022.py` (`pixi run match-2022`, via the
@@ -211,7 +208,7 @@ Reports and helpers:
   `data/processed/match_2022/`. `eda-v3-validation.qmd` imports it, so edits to it change
   that report as well as the CLI output.
 - `docs/crosswalk_2022.md` — the 2026 → 2022 taxonomy crosswalk and its defects.
-- `analysis/v3/eda-v3-basecheck.qmd` → `reports/v3/eda-v3-basecheck.pdf` (`pixi run eda-v3-base`)
+- `analysis/v3/eda-v3-basecheck.qmd` → `reports/v3/eda-v3-basecheck.pdf` (`pixi run render eda-v3-basecheck`)
   — the commercial directory profiled and re-matched. It exists because
   `eda-v3-validation.qmd` reports the directory corroborating only **3.6 %** of
   the export, which is a **join artefact**: `v3_common.norm_address` strips the
@@ -226,14 +223,14 @@ Reports and helpers:
   Russian twin. The 3.6 % figure still stands in
   `reports/v3/eda-v3-validation.pdf`; treat it as superseded.
 - `analysis/v3/eda-v3-ru.qmd` / `eda-v3-validation-ru.qmd` → the Russian twins
-  (`pixi run eda-v3-ru` / `eda-v3-val-ru` / `eda-v3-all-ru`). **Only the prose
+  (`pixi run render eda-v3-ru eda-v3-validation-ru`, or `render v3 --lang ru`). **Only the prose
   and the figure/table captions are translated** — every `{python}` cell is
   byte-identical to the English source, so the rendered tables and charts stay in
   English. Their front matter takes its fonts from `_fonts.tex` like every
   other report; their code cells need no adjustment at all, since the setup-cell
   bootstrap locates the repository root on its own.
   All three v3 reports have a Russian twin, the basecheck one included
-  (`pixi run eda-v3-base-ru`), as does the v4 report.
+  (`pixi run render eda-v3-basecheck-ru`), as does the v4 report.
   `scripts/build_ru_v3.py` regenerates `eda-v3-ru.qmd` from the English source:
   after editing `analysis/v3/eda-v3.qmd`, re-run it rather than hand-patching the
   twin, and add any new prose block to its translation map. Follow it with
@@ -265,8 +262,8 @@ geographic coverage, only a judgement about which existing objects plausibly
 sell alcohol or tobacco. It does **not** withdraw the third delivery — the two
 are used together, and `eda-v4.qmd` loads both.
 
-- `analysis/v4/eda-v4.qmd` → `reports/v4/eda-v4.pdf` (`pixi run eda-v4`), with
-  the Russian twin `eda-v4-ru.qmd` → `eda-v4-ru.pdf` (`pixi run eda-v4-ru`).
+- `analysis/v4/eda-v4.qmd` → `reports/v4/eda-v4.pdf` (`pixi run render eda-v4`), with
+  the Russian twin `eda-v4-ru.qmd` → `eda-v4-ru.pdf` (`pixi run render eda-v4-ru`).
   Same rule as the v3 twins: **prose and captions only** are translated, every
   `{python}` cell is byte-identical, and the fonts come from `_fonts.tex`.
   `scripts/build_ru_v4.py` regenerates it — after editing
@@ -324,7 +321,7 @@ records nationwide, kept as its 308 MB ZIP (the parser streams out of it), git-i
   the okrug recovery. Kept **separate from `v3_common.py`** (different source,
   different grain); what is shared is imported from `v3_common`, not copied.
 - `analysis/egais/eda-egais.qmd` → `reports/egais/eda-egais.pdf`
-  (`pixi run eda-egais`). English only; no Russian twin yet.
+  (`pixi run render eda-egais`). English only; no Russian twin yet.
 - `docs/egais_source_notes.md` — the full field-level write-up.
 
 Two things about this source govern how it may be used:
@@ -352,7 +349,7 @@ activity class, holder and INN, the three score components, and the count of
 distinct licences at the address. `docs/v4_egais_match.md` is the write-up.
 
 `analysis/v4/licences-v4-ru.qmd` → `reports/v4/licences-v4-ru.pdf`
-(`pixi run licences-v4-ru`) presents that result: the match summaries as
+(`pixi run render licences-v4-ru`) presents that result: the match summaries as
 formatted tables, the full list of alcohol objects with no licence at their
 address, and the tobacco no-licence counts by object class. **Russian-only, and
 it re-runs nothing** — it reads `data/processed/v4_licences/v4_licences.csv`, so its numbers

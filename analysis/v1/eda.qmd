@@ -29,7 +29,7 @@ jupyter: python3
 # | tags: [parameters]
 # Which dataset to analyse: "enriched" (full city export) or "health"
 # (the health-and-risk filtered subset). Override with:
-#   pixi run eda-health
+#   pixi run render eda-health
 dataset = "enriched"
 ```
 
@@ -217,7 +217,7 @@ the full city export or the health-and-risk subset.
 ## Dataset analysed: **`{python} DS_LABEL`** — `{python} f"{n_obj:,}"` objects
 `enriched` = full city inventory · `health` = objects pre-filtered to
 health-supporting infrastructure and risk factors. Render the other view with
-`pixi run eda-health`.
+`pixi run render eda-health`.
 :::
 
 ```{python}

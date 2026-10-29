@@ -186,24 +186,14 @@ The project uses [pixi](https://pixi.sh) for dependency management (conda-forge)
 
 ```bash
 pixi install            # create the environment from pixi.lock
-pixi run profile        # print a quick profile of the dataset
-pixi run eda            # render the full enriched export  -> reports/v1/eda.pdf
-pixi run eda-health     # render the health & risk subset  -> reports/v1/eda-health.pdf
-pixi run eda-all        # render both reports
-pixi run eda-ru         # Russian report, enriched export  -> reports/v1/eda-ru.pdf
-pixi run eda-health-ru  # Russian report, health subset    -> reports/v1/eda-health-ru.pdf
-pixi run eda-all-ru     # render both Russian reports
-pixi run eda-v2         # render the second-delivery report -> reports/v2/eda-v2.pdf
-pixi run eda-v3         # render the third-delivery report  -> reports/v3/eda-v3.pdf
-pixi run eda-v3-val     # render the validation report      -> reports/v3/eda-v3-validation.pdf
-pixi run eda-v3-all     # render both third-delivery reports
-pixi run eda-v3-base    # commercial-directory source check -> reports/v3/eda-v3-basecheck.pdf
+pixi run render         # list every report (analysis/<delivery>/*.qmd)
+pixi run render eda     # one report  -> reports/v1/eda.pdf
+pixi run render eda-health eda-v4-ru   # several, by name
+pixi run render v1      # every report of one delivery (v1, v2, v3, v4, egais, final)
+pixi run render v3 --lang ru           # ... only the Russian twins
+pixi run render all -n  # print the quarto commands for everything, run nothing
+pixi run build-ru       # regenerate the Russian v3/v4 twins from the English sources
 pixi run match-2022     # run the independent 2022 <-> 2026 matcher -> data/processed/match_2022/
-pixi run eda-v3-ru      # Russian third-delivery report -> reports/v3/eda-v3-ru.pdf
-pixi run eda-v3-val-ru  # Russian validation report     -> reports/v3/eda-v3-validation-ru.pdf
-pixi run eda-v3-all-ru  # render both Russian third-delivery reports
-pixi run eda-v3-base-ru # Russian source check -> reports/v3/eda-v3-basecheck-ru.pdf
-pixi run build-ru       # regenerate the Russian v3 twins from the English sources
 ```
 
 `reports/` is **git-ignored**: the PDFs are deliverables, rebuilt on demand from
@@ -361,9 +351,9 @@ Files in `data/raw_v3/` keep their original names.
 ## Fourth delivery — `data/raw_v4/` (2026-09-03 / 2026-09-04)
 
 Two CSVs, one per risk factor, analysed in
-[`reports/v4/eda-v4.pdf`](reports/v4/eda-v4.pdf) (`pixi run eda-v4`), with a
+[`reports/v4/eda-v4.pdf`](reports/v4/eda-v4.pdf) (`pixi run render eda-v4`), with a
 Russian twin at [`reports/v4/eda-v4-ru.pdf`](reports/v4/eda-v4-ru.pdf)
-(`pixi run eda-v4-ru`). Full
+(`pixi run render eda-v4-ru`). Full
 field-level notes are in [`docs/v4_source_notes.md`](docs/v4_source_notes.md).
 
 **It is not a fourth survey — it is a risk-attribution layer over the third.**
