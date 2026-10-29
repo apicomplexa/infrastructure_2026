@@ -13,9 +13,9 @@ application — a small analysis repo. Background is in `docs/` and `README.md`.
 Four top-level directories carry the work, split by *kind*, and the analysis and
 report trees are split again by *delivery*:
 
-- `analysis/v1|v2|v3|v4|egais/` — report **sources** only (`.qmd`). The Russian
+- `analysis/v1|v2|v3|v4|egais|final/` — report **sources** only (`.qmd`). The Russian
   twin of a report sits beside its English original as `*-ru.qmd`.
-- `reports/v1|v2|v3|v4|egais/` — rendered **PDFs**, written by the pixi tasks via
+- `reports/v1|v2|v3|v4|egais|final/` — rendered **PDFs**, written by the pixi tasks via
   `--output-dir`. **Git-ignored**: they are deliverables, rebuilt on demand.
   Never hand-edit anything here, and do not add them to the index.
 - `src/arkhinfra/` — the importable **library**: `paths.py`, `v3_common.py`,
@@ -85,6 +85,11 @@ always run tools through pixi:
 - `pixi run fetch-foursquare` — FSQ OS Places snapshot for the three cities →
   `data/raw_alter_foursquare/fsq_places_<release>.parquet` (needs a saved
   Hugging Face token; the dataset is gated)
+- `pixi run validation-final-ru` — render the Russian report on the final
+  delivery's data quality and the confirmation method →
+  `reports/final/validation-final-ru.pdf`; reads `data/processed/final_confirm/`,
+  re-runs nothing. Its flowcharts are `{mermaid}` blocks, so the PDF build also
+  needs a Chrome/Chromium Quarto can find (`quarto install chromium` on Linux)
 - `pixi run confirm-final` — add «Подтверждено» / «Основания» to the final
   delivery → `data/processed/final_confirm/*_подтверждено.xlsx`; offline by
   default, `--yandex` queries Yandex Maps for the undecided objects (cached)

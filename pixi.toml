@@ -24,6 +24,7 @@ eda-v3-base-ru = { cmd = "quarto render analysis/v3/eda-v3-basecheck-ru.qmd --to
 eda-v4 = { cmd = "quarto render analysis/v4/eda-v4.qmd --to pdf --output-dir ../../reports/v4", description = "Render the fourth-delivery risk-layer EDA (data/raw_v4) -> reports/v4/eda-v4.pdf" }
 eda-v4-ru = { cmd = "quarto render analysis/v4/eda-v4-ru.qmd --to pdf --output-dir ../../reports/v4", description = "Render the Russian fourth-delivery report -> reports/v4/eda-v4-ru.pdf" }
 licences-v4-ru = { cmd = "quarto render analysis/v4/licences-v4-ru.qmd --to pdf --output-dir ../../reports/v4", description = "Render the Russian licence-match report (reads data/processed/v4_licences/v4_licences.csv) -> reports/v4/licences-v4-ru.pdf" }
+validation-final-ru = { cmd = "quarto render analysis/final/validation-final-ru.qmd --to pdf --output-dir ../../reports/final", description = "Render the Russian final-delivery validation report (reads data/processed/final_confirm/) -> reports/final/validation-final-ru.pdf" }
 match-2022 = { cmd = "python scripts/match_2022.py", description = "Run the independent 2022 <-> v3 record matcher; writes data/processed/match_2022/match_2022_*.csv" }
 eda-egais = { cmd = "quarto render analysis/egais/eda-egais.qmd --to pdf --output-dir ../../reports/egais", description = "Render the FSRAR licence-registry EDA -> reports/egais/eda-egais.pdf" }
 parse-egais = { cmd = "python scripts/parse_egais.py", description = "Stream the 10.9 GB FSRAR licence registry -> data/processed/egais/egais_licences_arkhangelsk.tsv" }
