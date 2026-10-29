@@ -74,6 +74,10 @@ always run tools through pixi:
 - `pixi run licmatch-test` — run the 130 unit tests of the record-linkage package
   (stdlib unittest; no data needed)
 - `pixi run profile` — quick dataset profile
+- `pixi run parse-egais-final` — the same streaming pass over the registry for
+  the three final-delivery cities → `data/processed/egais/egais_licences_final.tsv`
+  (3,420 rows, same 27 columns; its Arkhangelsk rows equal the city TSV). The
+  parser reads the ZIP directly (`EGAIS_ZIP`)
 
 The EDA is parameterised (`dataset: enriched | health`, a `parameters`-tagged
 cell) and needs **papermill** for `-P` injection. The health export has a
@@ -289,7 +293,7 @@ Other traps:
 
 Not a commissioned delivery — the state consolidated register of licences,
 downloaded as open data (2026-07-01 snapshot). One **10.9 GB XML**, 1,660,448
-records nationwide, git-ignored for bulk like the v2/v3 payloads.
+records nationwide, kept as its 308 MB ZIP (the parser streams out of it), git-ignored for bulk like the v2/v3 payloads.
 
 - `scripts/parse_egais.py` (`pixi run parse-egais`) reduces it to
   `data/processed/egais/egais_licences_arkhangelsk.tsv` — 2,100 rows × 27 columns.

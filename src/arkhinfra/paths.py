@@ -89,3 +89,11 @@ def ensure_licmatch_path() -> Path:
     if LICMATCH_SRC.is_dir() and p not in sys.path:
         sys.path.append(p)
     return LICMATCH_SRC
+
+
+# The registry ships as a ZIP holding the one XML; `scripts/parse_egais.py`
+# streams it from either, so the 10.9 GB file need never be unpacked.
+EGAIS_ZIP = RAW_EGAIS / "data-20260701t0000-structure-20190918t0000.zip"
+# The same 27 columns as EGAIS_TSV over the three cities of the final delivery
+# (parse-egais-final).  A separate file, so the v4 join keeps its input.
+EGAIS_FINAL_TSV = PROC_EGAIS / "egais_licences_final.tsv"

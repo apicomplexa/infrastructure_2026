@@ -11,12 +11,23 @@ Note the published data does *not* follow its own XSD: the schema describes
 elements, and several element names differ from the schema (the registry's own
 "выезного" typo among them).  The map below follows the file.
 
-Usage:  pixi run parse-egais [--scope city|oblast] [--limit N]
+The registry is published as a ZIP holding that one XML.  Either is accepted:
+a member of a ZIP is read through `zipfile`'s decompressing stream, so the
+archive never has to be unpacked to disk, at the cost of ~1 minute of inflate.
+
+`--settlements` swaps the city filter for a list of settlements (the final
+delivery covers Архангельск, Северодвинск and Новодвинск) and writes a separate
+file, EGAIS_FINAL_TSV; the default run, and the TSV the v4 join reads, are
+unchanged.
+
+Usage:  pixi run parse-egais [--scope city|oblast] [--limit N] [--src PATH]
+        pixi run parse-egais-final   # --settlements архангельск северодвинск новодвинск
 """
 from __future__ import annotations
 
 import argparse
 import re
+import zipfile
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -80,6 +91,14 @@ COLUMNS = [
 # Generous box around the city, used only to flag the registry's own coordinate
 # typos (dropped degrees, transposed digits) — the values are kept either way.
 BBOX = (64.40, 64.75, 40.30, 40.90)  # lat_min, lat_max, lon_min, lon_max
+# The same, per settlement, for a `--settlements` run: each row is checked
+# against the box of its own settlement.  A settlement missing here gets no
+# `coord_plausible` verdict, and `egais.load_egais()` then drops its coordinate.
+BOXES = {
+    "архангельск": BBOX,
+    "северодвинск": (64.45, 64.70, 39.40, 40.20),
+    "новодвинск": (64.35, 64.47, 40.65, 41.00),
+}
 
 # A settlement token as the registry writes it: "Архангельск Город", "Талаги
 # Деревня", occasionally "г Архангельск".  Matching whole tokens is what keeps
@@ -146,6 +165,30 @@ def in_arkhangelsk_city(addr: str) -> bool:
     return settlement_name(split_address(addr)[0]) == "архангельск"
 
 
+def needles_for(names: list[str]) -> tuple[bytes, ...]:
+    """Byte needles for a settlement list, as NEEDLES is for the one city.
+
+    The first letter is dropped so one needle catches the capitalised and the
+    lower-case spelling, and an upper-case one catches the shouted form.
+    """
+    out: list[bytes] = []
+    for n in names:
+        stem = n.strip().lower()[1:]
+        out += [stem.encode(), stem.upper().encode()]
+    return tuple(out)
+
+
+def open_source(src: Path):
+    """(binary stream, uncompressed size) for the XML or a ZIP holding it."""
+    if src.suffix.lower() != ".zip":
+        return src.open("rb"), src.stat().st_size
+    zf = zipfile.ZipFile(src)
+    xml = [i for i in zf.infolist() if i.filename.lower().endswith(".xml")]
+    if len(xml) != 1:
+        raise ValueError(f"{src}: expected one .xml member, found {len(xml)}")
+    return zf.open(xml[0]), xml[0].file_size
+
+
 def parse_coords(raw: str) -> tuple[str, str]:
     """"Широта - 64° 32' 22''; Долгота - 40° 32' 5''" -> ("64.539444", "40.534722")."""
     if not raw or "Широта" not in raw:
@@ -194,23 +237,41 @@ def main() -> int:
                          "oblast: every row mentioning Arkhangelsk anywhere.")
     ap.add_argument("--limit", type=int, default=0,
                     help="stop after N kept rows (smoke test)")
+    ap.add_argument("--settlements", nargs="+", default=None, metavar="NAME",
+                    help="keep rows whose outlet settlement is one of these "
+                         "(lower case, e.g. архангельск северодвинск); "
+                         "overrides --scope and writes EGAIS_FINAL_TSV")
+    ap.add_argument("--src", type=Path, default=None,
+                    help="the registry XML, or the ZIP holding it "
+                         "(default: the XML if unpacked, else the ZIP)")
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
 
-    src = paths.EGAIS_XML
+    src = args.src or (paths.EGAIS_XML if paths.EGAIS_XML.exists() else paths.EGAIS_ZIP)
     if not src.exists():
         raise FileNotFoundError(src)
-    out = args.out or (paths.EGAIS_TSV if args.scope == "city"
-                       else paths.PROC / "egais_licences_arkhangelsk_oblast.tsv")
+    keep_names = {s.strip().lower() for s in args.settlements} if args.settlements else None
+    needles = needles_for(sorted(keep_names)) if keep_names else NEEDLES
+    if keep_names:
+        out = args.out or paths.EGAIS_FINAL_TSV
+    else:
+        out = args.out or (paths.EGAIS_TSV if args.scope == "city"
+                           else paths.PROC_EGAIS / "egais_licences_arkhangelsk_oblast.tsv")
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    total = src.stat().st_size
+    def keep(rec: dict[str, str]) -> bool:
+        addr = rec.get("outlet_address", "")
+        if keep_names:
+            return settlement_name(split_address(addr)[0]) in keep_names
+        return args.scope == "oblast" or in_arkhangelsk_city(addr)
+
+    fh, total = open_source(src)
     unknown: set[str] = set()
     records: list[dict[str, str]] = []
     n_rows = n_hits = read = next_report = 0
     buf = b""
 
-    with src.open("rb") as fh:
+    with fh:
         while True:
             chunk = fh.read(CHUNK)
             if not chunk:
@@ -220,14 +281,14 @@ def main() -> int:
             buf = segments.pop()
             for seg in segments:
                 n_rows += 1
-                if not any(n in seg for n in NEEDLES):
+                if not any(n in seg for n in needles):
                     continue
                 start = seg.find(b"<row>")
                 if start < 0:
                     continue
                 n_hits += 1
                 rec = row_to_record(seg[start:] + b"</row>", unknown)
-                if args.scope == "oblast" or in_arkhangelsk_city(rec.get("outlet_address", "")):
+                if keep(rec):
                     records.append(rec)
             if read >= next_report:
                 print(f"  {read / 1e9:6.2f} / {total / 1e9:.2f} GB "
@@ -244,8 +305,9 @@ def main() -> int:
          rec["outlet_street"], rec["outlet_house"]) = split_address(addr)
         lat, lon = parse_coords(rec.get("coords_raw", ""))
         rec["lat"], rec["lon"] = lat, lon
-        if lat and lon:
-            lo_a, hi_a, lo_o, hi_o = BBOX
+        box = BOXES.get(settlement_name(rec["outlet_settlement"])) if keep_names else BBOX
+        if lat and lon and box:
+            lo_a, hi_a, lo_o, hi_o = box
             rec["coord_plausible"] = str(lo_a <= float(lat) <= hi_a and lo_o <= float(lon) <= hi_o).lower()
 
     with out.open("w", encoding="utf-8", newline="\n") as fh:
@@ -254,8 +316,9 @@ def main() -> int:
             fh.write("\t".join(rec.get(c, "") for c in COLUMNS) + "\n")
 
     print(f"\nrows scanned        {n_rows:,}", file=sys.stderr)
-    print(f"mention Arkhangelsk {n_hits:,}", file=sys.stderr)
-    print(f"written ({args.scope})  {len(records):,} -> {out}", file=sys.stderr)
+    print(f"needle hits         {n_hits:,}", file=sys.stderr)
+    scope = "settlements " + ",".join(sorted(keep_names)) if keep_names else args.scope
+    print(f"written ({scope})  {len(records):,} -> {out}", file=sys.stderr)
     if unknown:
         print("unmapped elements (dropped): " + ", ".join(sorted(unknown)), file=sys.stderr)
     return 0
