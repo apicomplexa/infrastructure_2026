@@ -85,8 +85,12 @@ always run tools through pixi:
   `data/raw_alter_foursquare/fsq_places_<release>.parquet` (needs a saved
   Hugging Face token; the dataset is gated)
 - `pixi run render validation-final-ru` reads `data/processed/final_confirm/` and
-  re-runs nothing. Its flowcharts are `{mermaid}` blocks, so the PDF build also
-  needs a Chrome/Chromium Quarto can find (`quarto install chromium` on Linux)
+  re-runs nothing. Its flowcharts are Graphviz `{dot}` blocks, not mermaid:
+  Quarto writes a figure's width *and* height into `\includegraphics`, so a
+  tall mermaid chart (its decision diamonds are huge) runs off the page and no
+  LaTeX cap can stop it; `dot` takes `rank=same`, compact boxes and `ranksep`.
+  The PDF build still needs a headless Chrome Quarto can find
+  (`quarto install chrome-headless-shell` on Linux)
 - `pixi run confirm-final` — add «Подтверждено» / «Основания» to the final
   delivery → `data/processed/final_confirm/*_подтверждено.xlsx`; offline by
   default, `--yandex` queries Yandex Maps for the undecided objects (cached)
