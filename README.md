@@ -198,7 +198,7 @@ pixi run eda-v3         # render the third-delivery report  -> reports/v3/eda-v3
 pixi run eda-v3-val     # render the validation report      -> reports/v3/eda-v3-validation.pdf
 pixi run eda-v3-all     # render both third-delivery reports
 pixi run eda-v3-base    # commercial-directory source check -> reports/v3/eda-v3-basecheck.pdf
-pixi run match-2022     # run the independent 2022 <-> 2026 matcher -> data/processed/
+pixi run match-2022     # run the independent 2022 <-> 2026 matcher -> data/processed/match_2022/
 pixi run eda-v3-ru      # Russian third-delivery report -> reports/v3/eda-v3-ru.pdf
 pixi run eda-v3-val-ru  # Russian validation report     -> reports/v3/eda-v3-validation-ru.pdf
 pixi run eda-v3-all-ru  # render both Russian third-delivery reports

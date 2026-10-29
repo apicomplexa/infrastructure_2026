@@ -2,7 +2,7 @@
 
     pixi run export-licences
 
-Writes into `data/processed/`:
+Writes into `data/processed/deliverables/`:
 
 * `v4_licences_alcohol_matched.xlsx` — alcohol rows holding a licence of their
   own (`licence_status` Active / Archived);
@@ -18,7 +18,7 @@ Writes into `data/processed/`:
 The column plan and the legend are `arkhinfra.v4_export`; this script reads the
 inputs, re-runs the join (`v4_egais.join()`) for the two fields the working
 file does not keep, and guards the result.  **The guard is the point**: the re-run must reproduce
-`data/processed/v4_licences.csv` row for row on the licence number and the
+`data/processed/v4_licences/v4_licences.csv` row for row on the licence number and the
 status, or nothing is written.  A deliverable that quietly disagrees with the
 summary and the report is worse than no deliverable.
 

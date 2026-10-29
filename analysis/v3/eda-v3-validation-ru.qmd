@@ -72,7 +72,7 @@ TIER_LABEL = {
 }
 TIER_COLOR = {"exact": GREEN, "probable": ACCENT, "gps_only": PURPLE, "unmatched": RISK}
 
-PROC = c.PROC
+PROC = c.PROC_MATCH_2022
 local = pd.read_csv(PROC / "match_2022_local.csv", sep=";", encoding="utf-8-sig")
 vendor = pd.read_csv(PROC / "match_2022_vendor.csv", sep=";", encoding="utf-8-sig")
 sens = pd.read_csv(PROC / "match_2022_sensitivity.csv", sep=";", encoding="utf-8-sig")

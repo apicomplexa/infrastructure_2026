@@ -3,10 +3,10 @@
 **Read this before labelling anything.** It is written first on purpose: rules
 settled after the labeller has seen the data are rules fitted to the data.
 
-- **Sample**: `data/processed/taxonomy_2022_audit_sample.csv`, 600 objects.
+- **Sample**: `data/processed/taxonomy_2022/taxonomy_2022_audit_sample.csv`, 600 objects.
 - **Drawn by**: `scripts/audit_sample_2022.py`
 - **Seed**: 20260915
-- **Numbers, weights and precision**: `data/processed/taxonomy_2022_audit_sample_summary.txt`
+- **Numbers, weights and precision**: `data/processed/taxonomy_2022/taxonomy_2022_audit_sample_summary.txt`
 - **Background**: `docs/classifier_design.md`, §7 (the approved audit) and §10
   (why it is stratified over the rule rather than over a model).
 

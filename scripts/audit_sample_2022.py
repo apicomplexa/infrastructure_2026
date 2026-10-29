@@ -2,7 +2,7 @@
 
     pixi run python scripts/audit_sample_2022.py
 
-Writes `data/processed/taxonomy_2022_audit_sample.csv` (600 rows, one per
+Writes `data/processed/taxonomy_2022/taxonomy_2022_audit_sample.csv` (600 rows, one per
 object, seven empty `true_<class>` columns for the labeller) and
 `taxonomy_2022_audit_sample_summary.txt` beside it.  The labelling rules live in
 `docs/taxonomy_2022_audit_protocol.md` and must be read before labelling starts;
@@ -95,10 +95,10 @@ import pandas as pd  # noqa: E402
 
 from arkhinfra import taxonomy_2022 as tx  # noqa: E402
 from arkhinfra import v3_common as v3  # noqa: E402
-from arkhinfra.paths import DOCS, PROC  # noqa: E402
+from arkhinfra.paths import DOCS, PROC_TAXONOMY  # noqa: E402
 
-OUT_CSV = PROC / "taxonomy_2022_audit_sample.csv"
-OUT_TXT = PROC / "taxonomy_2022_audit_sample_summary.txt"
+OUT_CSV = PROC_TAXONOMY / "taxonomy_2022_audit_sample.csv"
+OUT_TXT = PROC_TAXONOMY / "taxonomy_2022_audit_sample_summary.txt"
 PROTOCOL = DOCS / "taxonomy_2022_audit_protocol.md"
 
 # Fixed once.  Changing it redraws the sample and invalidates any labelling
@@ -465,7 +465,7 @@ def write_csv(s: pd.DataFrame, txt: str) -> None:
     for line in pre:
         buf.write(("# " + line).rstrip() + "\n")
     s.to_csv(buf, sep=";", index=False, lineterminator="\n")
-    PROC.mkdir(parents=True, exist_ok=True)
+    PROC_TAXONOMY.mkdir(parents=True, exist_ok=True)
     OUT_CSV.write_text(buf.getvalue(), encoding="utf-8-sig")
 
 

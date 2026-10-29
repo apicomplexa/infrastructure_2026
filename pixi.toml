@@ -23,15 +23,15 @@ eda-v3-all-ru = { cmd = "quarto render analysis/v3/eda-v3-ru.qmd --to pdf --outp
 eda-v3-base-ru = { cmd = "quarto render analysis/v3/eda-v3-basecheck-ru.qmd --to pdf --output-dir ../../reports/v3", description = "Render the Russian commercial-directory source check -> reports/v3/eda-v3-basecheck-ru.pdf" }
 eda-v4 = { cmd = "quarto render analysis/v4/eda-v4.qmd --to pdf --output-dir ../../reports/v4", description = "Render the fourth-delivery risk-layer EDA (data/raw_v4) -> reports/v4/eda-v4.pdf" }
 eda-v4-ru = { cmd = "quarto render analysis/v4/eda-v4-ru.qmd --to pdf --output-dir ../../reports/v4", description = "Render the Russian fourth-delivery report -> reports/v4/eda-v4-ru.pdf" }
-licences-v4-ru = { cmd = "quarto render analysis/v4/licences-v4-ru.qmd --to pdf --output-dir ../../reports/v4", description = "Render the Russian licence-match report (reads data/processed/v4_licences.csv) -> reports/v4/licences-v4-ru.pdf" }
-match-2022 = { cmd = "python scripts/match_2022.py", description = "Run the independent 2022 <-> v3 record matcher; writes data/processed/match_2022_*.csv" }
+licences-v4-ru = { cmd = "quarto render analysis/v4/licences-v4-ru.qmd --to pdf --output-dir ../../reports/v4", description = "Render the Russian licence-match report (reads data/processed/v4_licences/v4_licences.csv) -> reports/v4/licences-v4-ru.pdf" }
+match-2022 = { cmd = "python scripts/match_2022.py", description = "Run the independent 2022 <-> v3 record matcher; writes data/processed/match_2022/match_2022_*.csv" }
 eda-egais = { cmd = "quarto render analysis/egais/eda-egais.qmd --to pdf --output-dir ../../reports/egais", description = "Render the FSRAR licence-registry EDA -> reports/egais/eda-egais.pdf" }
-parse-egais = { cmd = "python scripts/parse_egais.py", description = "Stream the 10.9 GB FSRAR licence registry -> data/processed/egais_licences_arkhangelsk.tsv" }
-match-egais-v4 = { cmd = "python scripts/match_egais_v4.py", description = "Match data/raw_v4 against the licence registry -> data/processed/v4_licences.csv" }
-check-yandex = { cmd = "python scripts/check_yandex_v4.py", description = "Check the v4 alcohol objects holding no licence of their own against Yandex Maps -> data/processed/v4_alcohol_none_yandex.csv" }
-export-licences = { cmd = "python scripts/export_licences_v4.py", description = "Build the four deliverable licence spreadsheets -> data/processed/v4_licences_*.xlsx, v4_alcohol_no_licence.xlsx, v4_brand_aliases.xlsx" }
+parse-egais = { cmd = "python scripts/parse_egais.py", description = "Stream the 10.9 GB FSRAR licence registry -> data/processed/egais/egais_licences_arkhangelsk.tsv" }
+match-egais-v4 = { cmd = "python scripts/match_egais_v4.py", description = "Match data/raw_v4 against the licence registry -> data/processed/v4_licences/v4_licences.csv" }
+check-yandex = { cmd = "python scripts/check_yandex_v4.py", description = "Check the v4 alcohol objects holding no licence of their own against Yandex Maps -> data/processed/v4_yandex/v4_alcohol_none_yandex.csv" }
+export-licences = { cmd = "python scripts/export_licences_v4.py", description = "Build the four deliverable licence spreadsheets -> data/processed/deliverables/v4_licences_*.xlsx, v4_alcohol_no_licence.xlsx, v4_brand_aliases.xlsx" }
 licmatch-test = { cmd = "python packages/licmatch/run_tests.py", description = "Run the licmatch (address-level record linkage) test suite" }
-build-taxonomy = { cmd = "python scripts/build_taxonomy_2022.py", description = "Write the seven independent 2022-class flags for the v3 export -> data/processed/taxonomy_2022.csv" }
+build-taxonomy = { cmd = "python scripts/build_taxonomy_2022.py", description = "Write the seven independent 2022-class flags for the v3 export -> data/processed/taxonomy_2022/taxonomy_2022.csv" }
 validate-taxonomy = { cmd = "python scripts/validate_taxonomy_2022.py", description = "Score the 2022-class flags against the 2022 benchmark on the linked rows" }
 audit-sample = { cmd = "python scripts/audit_sample_2022.py", description = "Draw the stratified manual-audit sample over the unlabelled rows" }
 review-queue = { cmd = "python scripts/review_queue_2022.py", description = "Build the manual-review queue from the `name`-evidence rows" }

@@ -45,7 +45,7 @@ _root = next(p for p in [Path.cwd(), *Path.cwd().parents]
 sys.path.insert(0, str(_root / "src"))
 from arkhinfra import v3_common as c  # noqa: E402
 from arkhinfra import taxonomy_2022 as tx  # noqa: E402
-from arkhinfra.paths import PROC  # noqa: E402
+from arkhinfra.paths import PROC_MATCH_2022  # noqa: E402
 
 mpl.rcParams.update({
     "font.family": "DejaVu Sans",   # full Cyrillic coverage for figure labels
@@ -332,7 +332,7 @@ show(combo.rename_axis("classes").rename("objects").to_frame())
 Два источника её всё же несут, и оба уже есть в репозитории: слои риска v4 от
 подрядчика (`data/raw_v4/`, с оговоркой, что 82 % из них — выведенный уровень,
 который, по собственному комментарию подрядчика, требует отдельной проверки) и
-реестр лицензий ФСРАР по алкоголю (`data/processed/v4_licences.csv`, который
+реестр лицензий ФСРАР по алкоголю (`data/processed/v4_licences/v4_licences.csv`, который
 сопоставляет с лицензией 80,6 % записей v4 и находит объект v4 по адресу у
 97,7 % из 442 действующих розничных лицензий off-trade). **Любое утверждение о
 совместной принадлежности должно строиться на них и никогда — на таблице
@@ -343,7 +343,7 @@ show(combo.rename_axis("classes").rename("objects").to_frame())
 
 ```{python}
 # | label: tbl-pr
-mt = pd.read_csv(PROC / "match_2022_local.csv", sep=";",
+mt = pd.read_csv(PROC_MATCH_2022 / "match_2022_local.csv", sep=";",
                  encoding="utf-8-sig", low_memory=False)
 lk = mt[mt.tier.isin(["exact", "probable"])].copy()
 lk["ti"] = lk.target_index.astype(int)
@@ -417,7 +417,7 @@ display(Markdown(
 **Центральной ветеринарной клиникой** в выгрузке. Ветеринарное вето нового
 правила право, а связь с эталоном ошибочна, — и это ровно тот режим отказа,
 который выделяет разложение ошибок в
-`data/processed/taxonomy_2022_validation.txt`.
+`data/processed/taxonomy_2022/taxonomy_2022_validation.txt`.
 
 ::: {.callout-warning}
 ## Почему эту таблицу нельзя экстраполировать
@@ -458,13 +458,13 @@ show(tab)
 # Что дальше
 
 **Очередь на ручную проверку**
-(`data/processed/taxonomy_2022_review_queue.csv`) ранжирует каждый объект, чья
+(`data/processed/taxonomy_2022/taxonomy_2022_review_queue.csv`) ранжирует каждый объект, чья
 принадлежность держится на слабом свидетельстве, — строки со свидетельством
 `name`, ячейки с несколькими классами, спортивную розницу и типы, чуть не
 дотянувшие до известного типа класса. Это работа, а не число: человек, идущий по
 ней сверху вниз, исправляет реальные записи.
 
-**Аудит** (`data/processed/taxonomy_2022_audit_sample.csv`, протокол в
+**Аудит** (`data/processed/taxonomy_2022/taxonomy_2022_audit_sample.csv`, протокол в
 `docs/taxonomy_2022_audit_protocol.md`) — это 600 объектов в шести стратах,
 отобранных по выходу правила на всём городе, включая простую случайную выборку
 из всех 7 263, чтобы стратифицированные ячейки можно было перевзвесить обратно.

@@ -1,7 +1,7 @@
 """Attach FSRAR licence data to every fourth-delivery record.
 
 Reads `data/raw_v4/` (both risk layers) and the licence extract
-`data/processed/egais_licences_arkhangelsk.tsv`, scores every
+`data/processed/egais/egais_licences_arkhangelsk.tsv`, scores every
 (v4 object x licence) pair with `arkhinfra.v4_egais`, and writes the v4 export
 back out with the licence columns appended.
 
@@ -41,13 +41,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from arkhinfra import v4_egais as m  # noqa: E402
 from arkhinfra.egais import load_egais  # noqa: E402
-from arkhinfra.paths import PROC  # noqa: E402
+from arkhinfra.paths import PROC_LICENCES  # noqa: E402
 from arkhinfra.v4_common import load_v4  # noqa: E402
 
 LAYERS = {"both": None, "alcohol": "Alcohol", "tobacco": "Tobacco"}
 STEM = {"both": "v4_licences", "alcohol": "v4_alcohol_licences",
         "tobacco": "v4_tobacco_licences"}
-BRANDS_CSV = PROC / "v4_brand_aliases.csv"
+BRANDS_CSV = PROC_LICENCES / "v4_brand_aliases.csv"
 
 # Written first, so the licence answer is readable without scrolling past the
 # 22 columns the delivery already had.
@@ -175,8 +175,8 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
 
-    out_csv = args.out or PROC / f"{STEM[args.layer]}.csv"
-    out_txt = PROC / f"{STEM[args.layer]}_summary.txt"
+    out_csv = args.out or PROC_LICENCES / f"{STEM[args.layer]}.csv"
+    out_txt = PROC_LICENCES / f"{STEM[args.layer]}_summary.txt"
 
     eg = load_egais()
     v4 = load_v4()
@@ -189,6 +189,7 @@ def main() -> int:
                     learn=not args.no_learn, exclusive=not args.no_exclusive,
                     brand_rule=not args.no_brand_rule)
     out = m.enrich(v4, eg, result=joined)
+    PROC_LICENCES.mkdir(parents=True, exist_ok=True)
     if joined.brands is not None and args.layer == "both":
         joined.brands.table.to_csv(BRANDS_CSV, sep=";", encoding="utf-8-sig", index=False)
     if LAYERS[args.layer]:

@@ -25,7 +25,7 @@ A directory can answer a different question, and a simpler one: **is there an
 organisation of that name at that address at all?** If neither FSRAR nor Yandex
 Maps knows the object, the row's evidence has thinned to the vendor's own tag,
 and that is a fact worth writing next to it. The result is
-`data/processed/v4_alcohol_none_yandex.csv` — one row per object, with its
+`data/processed/v4_yandex/v4_alcohol_none_yandex.csv` — one row per object, with its
 `licence_status` (and `licence_claimed_by` for a `Taken` row), the mark, the URL
 the mark came from, and what Yandex actually returned.
 
@@ -189,7 +189,7 @@ a door nobody knows; the rule itself has not been changed.
 
 ## The cache
 
-Every answer is stored in `data/processed/v4_yandex_cache.jsonl`, one line per
+Every answer is stored in `data/processed/v4_yandex/v4_yandex_cache.jsonl`, one line per
 object keyed by `site_key` (the `lat|lon` pair, unique across the queue), and what
 is stored is the **page's answer, not the verdict**: every candidate with its
 name, address and coordinate.

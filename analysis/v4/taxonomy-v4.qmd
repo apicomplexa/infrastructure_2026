@@ -44,7 +44,7 @@ _root = next(p for p in [Path.cwd(), *Path.cwd().parents]
 sys.path.insert(0, str(_root / "src"))
 from arkhinfra import v3_common as c  # noqa: E402
 from arkhinfra import taxonomy_2022 as tx  # noqa: E402
-from arkhinfra.paths import PROC  # noqa: E402
+from arkhinfra.paths import PROC_MATCH_2022  # noqa: E402
 
 mpl.rcParams.update({
     "font.family": "DejaVu Sans",   # full Cyrillic coverage for figure labels
@@ -325,7 +325,7 @@ and neither would a larger model.
 Two sources do carry it, and both are already in this repository: the
 contractor's v4 risk layers (`data/raw_v4/`, with the caveat that 82 % of them
 are the inferred tier the contractor's own comment says needs separate checking)
-and the FSRAR licence registry for alcohol (`data/processed/v4_licences.csv`,
+and the FSRAR licence registry for alcohol (`data/processed/v4_licences/v4_licences.csv`,
 which matches 80.6 % of v4 records to a licence and finds a v4 object at the
 address of 97.7 % of the 442 active off-trade retail licences). **Every
 co-membership claim must be built from those, never from the table above.**
@@ -335,7 +335,7 @@ co-membership claim must be built from those, never from the table above.**
 
 ```{python}
 # | label: tbl-pr
-mt = pd.read_csv(PROC / "match_2022_local.csv", sep=";",
+mt = pd.read_csv(PROC_MATCH_2022 / "match_2022_local.csv", sep=";",
                  encoding="utf-8-sig", low_memory=False)
 lk = mt[mt.tier.isin(["exact", "probable"])].copy()
 lk["ti"] = lk.target_index.astype(int)
@@ -407,7 +407,7 @@ one row against the old rule; the row is a dental clinic in the 2022 list that
 the matcher linked to the **Central Veterinary Clinic** in the export. The new
 rule's veterinary veto is right and the benchmark link is wrong, which is exactly
 the failure mode the error decomposition in
-`data/processed/taxonomy_2022_validation.txt` separates out.
+`data/processed/taxonomy_2022/taxonomy_2022_validation.txt` separates out.
 
 ::: {.callout-warning}
 ## Why this table cannot be extrapolated
@@ -443,12 +443,12 @@ it: 33 objects city-wide, every one of them a fascia keyword match.
 
 # What happens next
 
-**The review queue** (`data/processed/taxonomy_2022_review_queue.csv`) ranks every
+**The review queue** (`data/processed/taxonomy_2022/taxonomy_2022_review_queue.csv`) ranks every
 object whose membership rests on weak evidence — the `name` rows, the
 multi-label cells, sport retail, and types that are near-misses of a known class
 type. It is work, not a number: a human going down it fixes real records.
 
-**The audit** (`data/processed/taxonomy_2022_audit_sample.csv`, protocol in
+**The audit** (`data/processed/taxonomy_2022/taxonomy_2022_audit_sample.csv`, protocol in
 `docs/taxonomy_2022_audit_protocol.md`) is 600 objects in six strata drawn over
 the rule's output across the whole city, including a simple random sample of all
 7,263 so the stratified cells can be reweighted back. It costs about twenty

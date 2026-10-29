@@ -55,7 +55,7 @@ Two decisions were taken during this review:
 
 **2.1 `data/raw_v4/…_all.csv` and `V3_CSV` are the same file.** [verified — identical MD5
 `949c075672028e13f212c9aa4c57d5c6`] "The later export" is one object table of 7,263 rows,
-and `data/processed/match_2022_local.csv` already is the benchmark-to-export join this task
+and `data/processed/match_2022/match_2022_local.csv` already is the benchmark-to-export join this task
 needs. No new matcher is required.
 
 **2.2 There are five files in `data/raw_v4/`, not the two `v4_common.load_v4()` knows

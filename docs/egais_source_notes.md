@@ -7,7 +7,7 @@ by Росалкогольтабакконтроль at <https://fsrar.gov.ru/ope
 - `structure-20190918t0000.xsd.xml` — the declared schema
 - `data-...zip` — the 309 MB download the XML came out of
 
-Reduced to `data/processed/egais_licences_arkhangelsk.tsv` — **2,100 rows ×
+Reduced to `data/processed/egais/egais_licences_arkhangelsk.tsv` — **2,100 rows ×
 27 columns, 2.0 MB** — by `scripts/parse_egais.py` (`pixi run parse-egais`).
 Of the 12,311 records that mention Arkhangelsk anywhere, those 2,100 are the
 ones whose *outlet* address names the city itself.

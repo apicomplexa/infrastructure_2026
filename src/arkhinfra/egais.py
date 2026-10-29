@@ -1,7 +1,7 @@
 """Loader and normalisers for the FSRAR licence registry extract.
 
 `scripts/parse_egais.py` reduces the 10.9 GB registry XML to
-`data/processed/egais_licences_arkhangelsk.tsv`; everything downstream of that
+`data/processed/egais/egais_licences_arkhangelsk.tsv`; everything downstream of that
 file lives here, so `analysis/egais/eda-egais.qmd` imports rather than copies.
 
 Kept separate from `v3_common.py` deliberately.  This is a different source with

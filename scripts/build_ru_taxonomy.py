@@ -331,7 +331,7 @@ and neither would a larger model.
 Two sources do carry it, and both are already in this repository: the
 contractor's v4 risk layers (`data/raw_v4/`, with the caveat that 82 % of them
 are the inferred tier the contractor's own comment says needs separate checking)
-and the FSRAR licence registry for alcohol (`data/processed/v4_licences.csv`,
+and the FSRAR licence registry for alcohol (`data/processed/v4_licences/v4_licences.csv`,
 which matches 80.6 % of v4 records to a licence and finds a v4 object at the
 address of 97.7 % of the 442 active off-trade retail licences). **Every
 co-membership claim must be built from those, never from the table above.**
@@ -363,7 +363,7 @@ co-membership claim must be built from those, never from the table above.**
 Два источника её всё же несут, и оба уже есть в репозитории: слои риска v4 от
 подрядчика (`data/raw_v4/`, с оговоркой, что 82 % из них — выведенный уровень,
 который, по собственному комментарию подрядчика, требует отдельной проверки) и
-реестр лицензий ФСРАР по алкоголю (`data/processed/v4_licences.csv`, который
+реестр лицензий ФСРАР по алкоголю (`data/processed/v4_licences/v4_licences.csv`, который
 сопоставляет с лицензией 80,6 % записей v4 и находит объект v4 по адресу у
 97,7 % из 442 действующих розничных лицензий без общепита). **Любое утверждение
 о совместной принадлежности должно строиться на них и никогда — на таблице
@@ -391,7 +391,7 @@ one row against the old rule; the row is a dental clinic in the 2022 list that
 the matcher linked to the **Central Veterinary Clinic** in the export. The new
 rule's veterinary veto is right and the benchmark link is wrong, which is exactly
 the failure mode the error decomposition in
-`data/processed/taxonomy_2022_validation.txt` separates out.
+`data/processed/taxonomy_2022/taxonomy_2022_validation.txt` separates out.
 
 ::: {.callout-warning}
 ## Why this table cannot be extrapolated
@@ -413,7 +413,7 @@ population. The one axis that is *not* distorted is okrug.
 **Центральной ветеринарной клиникой** в выгрузке. Ветеринарное вето нового
 правила право, а связь с эталоном ошибочна, — и это ровно тот режим отказа,
 который выделяет разложение ошибок в
-`data/processed/taxonomy_2022_validation.txt`.
+`data/processed/taxonomy_2022/taxonomy_2022_validation.txt`.
 
 ::: {.callout-warning}
 ## Почему эту таблицу нельзя экстраполировать
@@ -443,12 +443,12 @@ it: 33 objects city-wide, every one of them a fascia keyword match.
 
 # What happens next
 
-**The review queue** (`data/processed/taxonomy_2022_review_queue.csv`) ranks every
+**The review queue** (`data/processed/taxonomy_2022/taxonomy_2022_review_queue.csv`) ranks every
 object whose membership rests on weak evidence — the `name` rows, the
 multi-label cells, sport retail, and types that are near-misses of a known class
 type. It is work, not a number: a human going down it fixes real records.
 
-**The audit** (`data/processed/taxonomy_2022_audit_sample.csv`, protocol in
+**The audit** (`data/processed/taxonomy_2022/taxonomy_2022_audit_sample.csv`, protocol in
 `docs/taxonomy_2022_audit_protocol.md`) is 600 objects in six strata drawn over
 the rule's output across the whole city, including a simple random sample of all
 7,263 so the stratified cells can be reweighted back. It costs about twenty
@@ -495,13 +495,13 @@ cite going forward.""",
 # Что дальше
 
 **Очередь на ручную проверку**
-(`data/processed/taxonomy_2022_review_queue.csv`) ранжирует каждый объект, чья
+(`data/processed/taxonomy_2022/taxonomy_2022_review_queue.csv`) ранжирует каждый объект, чья
 принадлежность держится на слабом свидетельстве, — строки со свидетельством
 `name`, ячейки с несколькими классами, спортивную розницу и типы, чуть не
 дотянувшие до известного типа класса. Это работа, а не число: человек, идущий по
 ней сверху вниз, исправляет реальные записи.
 
-**Аудит** (`data/processed/taxonomy_2022_audit_sample.csv`, протокол в
+**Аудит** (`data/processed/taxonomy_2022/taxonomy_2022_audit_sample.csv`, протокол в
 `docs/taxonomy_2022_audit_protocol.md`) — это 600 объектов в шести стратах,
 отобранных по выходу правила на всём городе, включая простую случайную выборку
 из всех 7 263, чтобы стратифицированные ячейки можно было перевзвесить обратно.

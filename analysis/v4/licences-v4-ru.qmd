@@ -43,12 +43,12 @@ from arkhinfra import v4_common as v4  # noqa: E402
 from arkhinfra import v4_egais as mg  # noqa: E402
 from arkhinfra import v4_yandex as yx  # noqa: E402
 from arkhinfra.egais import load_egais  # noqa: E402
-from arkhinfra.paths import PROC  # noqa: E402
+from arkhinfra.paths import PROC_LICENCES, PROC_YANDEX  # noqa: E402
 
 # The join itself is not re-run here: this report reads what
 # `pixi run match-egais-v4` already wrote, so its numbers are by construction
-# the numbers in data/processed/v4_licences_summary.txt.
-MATCHED = PROC / "v4_licences.csv"
+# the numbers in data/processed/v4_licences/v4_licences_summary.txt.
+MATCHED = PROC_LICENCES / "v4_licences.csv"
 d = pd.read_csv(MATCHED, sep=";", encoding="utf-8-sig", low_memory=False)
 d["licence_evidence"] = d["licence_evidence"].fillna("")
 d["licence_name_basis"] = d["licence_name_basis"].fillna("")
@@ -58,13 +58,13 @@ eg = load_egais()
 # The same join as it stood before the one-outlet / trade / brand rules: a
 # frozen copy of the earlier v4_licences.csv, kept only for the before/after
 # comparison.  Optional -- without it that comparison is skipped, not faked.
-BEFORE = PROC / "v4_licences_before_rules.csv"
+BEFORE = PROC_LICENCES / "v4_licences_before_rules.csv"
 old = (pd.read_csv(BEFORE, sep=";", encoding="utf-8-sig", low_memory=False)
        if BEFORE.exists() else None)
 
 # The (fascia, holder) pairs the join learned from the data; `used` marks the
 # ones that took part.
-BRANDS = PROC / "v4_brand_aliases.csv"
+BRANDS = PROC_LICENCES / "v4_brand_aliases.csv"
 br = (pd.read_csv(BRANDS, sep=None, engine="python", encoding="utf-8-sig",
                   dtype={"holder": str})
       if BRANDS.exists() else None)
@@ -73,7 +73,7 @@ br = (pd.read_csv(BRANDS, sep=None, engine="python", encoding="utf-8-sig",
 # directory, also pre-computed: `pixi run check-yandex` reads Yandex Maps once
 # per object and caches the answer, so this report stays offline like the rest
 # of it.  The file may cover only part of the queue; the rest reads «не пров.».
-ya = pd.read_csv(PROC / "v4_alcohol_none_yandex.csv", sep=";",
+ya = pd.read_csv(PROC_YANDEX / "v4_alcohol_none_yandex.csv", sep=";",
                  encoding="utf-8-sig").fillna("")
 YA = ya.drop_duplicates("site_key", keep="last").set_index("site_key")
 YA_UNCHECKED = "unchecked"

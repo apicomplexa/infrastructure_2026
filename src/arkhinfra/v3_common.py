@@ -19,7 +19,7 @@ import pandas as pd
 # Re-exported so existing report code keeps using c.RAW3 / c.V3_CSV unchanged;
 # arkhinfra.paths is the single definition.
 from .paths import (  # noqa: F401
-    ROOT, RAW, RAW2, RAW3, PROC,
+    ROOT, RAW, RAW2, RAW3, PROC, PROC_MATCH_2022,
     V3_CSV, V3_BASE, V3_ARK, V2_ARK, V2_CMP, V1_CSV, REF_2022,
 )
 

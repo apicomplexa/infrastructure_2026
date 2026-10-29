@@ -23,7 +23,7 @@ by eye.  This module builds what is:
 
 Nothing here re-decides anything.  The join is re-run through `v4_egais.join()`
 with its published defaults and checked row for row against
-`data/processed/v4_licences.csv` before a file is written, so these
+`data/processed/v4_licences/v4_licences.csv` before a file is written, so these
 spreadsheets carry the same numbers as the summary and the report or they are
 not written at all.  The re-run exists only to reach fields the working file
 does not keep: the registry's own coordinate, and the losing candidate.
@@ -41,20 +41,20 @@ import pandas as pd
 
 from . import v4_egais as mg
 from . import v4_yandex as yx
-from .paths import PROC, ensure_licmatch_path
+from .paths import PROC_DELIVER, PROC_LICENCES, ensure_licmatch_path
 
 ensure_licmatch_path()
 
 import licmatch as lm  # noqa: E402
 
-MATCHED_CSV = PROC / "v4_licences.csv"
+MATCHED_CSV = PROC_LICENCES / "v4_licences.csv"
 YANDEX_CSV = yx.OUT_CSV
 
-OUT_ALCOHOL = PROC / "v4_licences_alcohol_matched.xlsx"
-OUT_TOBACCO = PROC / "v4_licences_tobacco_matched.xlsx"
-OUT_NO_LICENCE = PROC / "v4_alcohol_no_licence.xlsx"
-BRANDS_CSV = PROC / "v4_brand_aliases.csv"
-OUT_BRANDS = PROC / "v4_brand_aliases.xlsx"
+OUT_ALCOHOL = PROC_DELIVER / "v4_licences_alcohol_matched.xlsx"
+OUT_TOBACCO = PROC_DELIVER / "v4_licences_tobacco_matched.xlsx"
+OUT_NO_LICENCE = PROC_DELIVER / "v4_alcohol_no_licence.xlsx"
+BRANDS_CSV = PROC_LICENCES / "v4_brand_aliases.csv"
+OUT_BRANDS = PROC_DELIVER / "v4_brand_aliases.xlsx"
 
 # --------------------------------------------------------------------------
 # Russian labels for the coded columns

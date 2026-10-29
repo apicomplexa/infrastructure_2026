@@ -55,22 +55,22 @@ always run tools through pixi:
   sources and normalise their numbers (the `build_ru_*` → `ru_numfmt` sequence
   in one go)
 - `pixi run parse-egais` — stream the 10.9 GB FSRAR licence registry into
-  `data/processed/egais_licences_arkhangelsk.tsv` (~6 min)
+  `data/processed/egais/egais_licences_arkhangelsk.tsv` (~6 min)
 - `pixi run eda-egais` — render the licence-registry report → `reports/egais/eda-egais.pdf`
 - `pixi run match-egais-v4` — join `data/raw_v4/` to the licence registry →
-  `data/processed/v4_licences.csv` (+ `_summary.txt`); `--calibrate` appends the
+  `data/processed/v4_licences/v4_licences.csv` (+ `_summary.txt`); `--calibrate` appends the
   threshold ladder
 - `pixi run check-yandex` — check the unlicensed v4 alcohol objects against
-  Yandex Maps → `data/processed/v4_alcohol_none_yandex.csv`; cached per object,
+  Yandex Maps → `data/processed/v4_yandex/v4_alcohol_none_yandex.csv`; cached per object,
   so a re-run is free (`--limit N` for a trial, `--refresh` to re-read)
 - `pixi run export-licences` — build the four deliverable spreadsheets of the
-  join → `data/processed/v4_licences_{alcohol,tobacco}_matched.xlsx`,
+  join → `data/processed/deliverables/v4_licences_{alcohol,tobacco}_matched.xlsx`,
   `v4_alcohol_no_licence.xlsx` and `v4_brand_aliases.xlsx`; refuses to write if
   the re-run disagrees with `v4_licences.csv`
 - `pixi run eda-v4` / `eda-v4-ru` — render the fourth-delivery risk-layer report
   → `reports/v4/eda-v4.pdf` (and its Russian twin)
 - `pixi run build-taxonomy` — re-cut the v3 export into seven independent 2022
-  classes → `data/processed/taxonomy_2022.csv` (+ `_summary.txt`)
+  classes → `data/processed/taxonomy_2022/taxonomy_2022.csv` (+ `_summary.txt`)
 - `pixi run licmatch-test` — run the 130 unit tests of the record-linkage package
   (stdlib unittest; no data needed)
 - `pixi run profile` — quick dataset profile
@@ -90,6 +90,17 @@ PDF rendering needs a system LaTeX install (built with MiKTeX on Windows).
   (second delivery, 2026-08-24), `data/raw_v3/` (third, 2026-08-31) and
   `data/raw_v4/` (fourth, 2026-09-03/04), and is **read-only** — never modify it in place;
   write derived files elsewhere (e.g. a `data/processed/` you create).
+- `data/processed/` (git-ignored) has **one subdirectory per pipeline**, each
+  with a constant in `arkhinfra.paths` — take paths from there, never write
+  into `PROC` itself:
+  `egais/` (`PROC_EGAIS`, parse-egais), `match_2022/` (`PROC_MATCH_2022`),
+  `taxonomy_2022/` (`PROC_TAXONOMY`, build-taxonomy and its audit / review /
+  validation scripts), `v4_licences/` (`PROC_LICENCES`, match-egais-v4: the
+  join, its summary, the learned brand pairs, the frozen `_before_rules` copy),
+  `v4_yandex/` (`PROC_YANDEX`, check-yandex and its cache), `deliverables/`
+  (`PROC_DELIVER`, the four XLSX of export-licences — the files handed on) and
+  `_archive/` (`PROC_ARCHIVE`, superseded outputs nothing reads: the
+  pre-2026-09-23 `--layer` files). File names keep their pipeline prefix.
 - Only `data/raw/` is in git. `data/raw_v2/`, `data/raw_v3/` and `data/raw_v4/`
   are **git-ignored** for bulk, so a fresh clone renders the first-delivery
   reports and nothing else until those directories are restored from the project
@@ -172,7 +183,7 @@ Reports and helpers:
   for both reports. Import it rather than copying code.
 - `src/arkhinfra/match_2022.py` (`pixi run match-2022`, via the
   `scripts/match_2022.py` launcher) — the independent matcher; writes to
-  `data/processed/`. `eda-v3-validation.qmd` imports it, so edits to it change
+  `data/processed/match_2022/`. `eda-v3-validation.qmd` imports it, so edits to it change
   that report as well as the CLI output.
 - `docs/crosswalk_2022.md` — the 2026 → 2022 taxonomy crosswalk and its defects.
 - `analysis/v3/eda-v3-basecheck.qmd` → `reports/v3/eda-v3-basecheck.pdf` (`pixi run eda-v3-base`)
@@ -280,7 +291,7 @@ downloaded as open data (2026-07-01 snapshot). One **10.9 GB XML**, 1,660,448
 records nationwide, git-ignored for bulk like the v2/v3 payloads.
 
 - `scripts/parse_egais.py` (`pixi run parse-egais`) reduces it to
-  `data/processed/egais_licences_arkhangelsk.tsv` — 2,100 rows × 27 columns.
+  `data/processed/egais/egais_licences_arkhangelsk.tsv` — 2,100 rows × 27 columns.
   It **streams**: 16 MiB chunks cut on `</row>`, and only segments whose raw
   bytes already contain "Архангельск" reach the XML parser. Never load this
   file whole. A full pass takes ~6 minutes.
@@ -310,7 +321,7 @@ licence columns, the evidence tiers and the summary tables. Change the rule
 there and re-run `pixi run licmatch-test`; change what a match *means* here.
 The methodology (weights, both floors, both routes, the calibration and the
 forbidden readings) is `packages/licmatch/docs/METHODOLOGY.md`. It writes
-`data/processed/v4_licences.csv` — the whole v4 export plus `licence_status`
+`data/processed/v4_licences/v4_licences.csv` — the whole v4 export plus `licence_status`
 (`Active` / `Archived` / `Taken` / `Other chain` / `Other trade` / `Not in registry`), the chosen licence's number, dates,
 activity class, holder and INN, the three score components, and the count of
 distinct licences at the address. `docs/v4_egais_match.md` is the write-up.
@@ -319,7 +330,7 @@ distinct licences at the address. `docs/v4_egais_match.md` is the write-up.
 (`pixi run licences-v4-ru`) presents that result: the match summaries as
 formatted tables, the full list of alcohol objects with no licence at their
 address, and the tobacco no-licence counts by object class. **Russian-only, and
-it re-runs nothing** — it reads `data/processed/v4_licences.csv`, so its numbers
+it re-runs nothing** — it reads `data/processed/v4_licences/v4_licences.csv`, so its numbers
 are by construction the ones in `v4_licences_summary.txt`; re-run
 `pixi run match-egais-v4` first if the join parameters change. It has no English
 twin and is not generated by `scripts/build_ru_v4.py` — do not add it there.
@@ -338,7 +349,7 @@ twin and is not generated by `scripts/build_ru_v4.py` — do not add it there.
   name term is a tie-breaker only; the nine unambiguous chains (Тандер→Магнит,
   Агроторг→Пятёрочка, Альбион-2002→Бристоль, …) are mapped in `BRAND_ALIASES`,
   and further fascia → holder-INN pairs are **learned from the data**
-  (`learn_brands()` → `data/processed/v4_brand_aliases.csv`; rule in
+  (`learn_brands()` → `data/processed/v4_licences/v4_brand_aliases.csv`; rule in
   `licmatch.brands`): a vote over addresses with the name term off, lift over
   the holder's base rate, competition for the outlet, a leave-one-site-out
   prior, and a franchise rule guarded by a holder-side test (≥ half the
@@ -420,7 +431,7 @@ No licence of its own is not "sells no alcohol", so the 440 alcohol rows in
 each object it issues the query a person would type — name, then address, map
 centred on the object's coordinate — and reads the organisations off the page
 Yandex Maps renders server-side. Result:
-`data/processed/v4_alcohol_none_yandex.csv`, one row per object, with the mark,
+`data/processed/v4_yandex/v4_alcohol_none_yandex.csv`, one row per object, with the mark,
 the search URL it came from, and what Yandex actually returned.
 
 - Marks are `present` / `closed` / `ambiguous` / `absent` / `error`, never a
@@ -436,7 +447,7 @@ the search URL it came from, and what Yandex actually returned.
   the city — without it Yandex answers "Елена, улица Адмирала Макарова, 38"
   with a garden plot near Kirov, and an address with no house number with a
   street in Baku.
-- Every answer is cached in `data/processed/v4_yandex_cache.jsonl`, keyed by
+- Every answer is cached in `data/processed/v4_yandex/v4_yandex_cache.jsonl`, keyed by
   `site_key`, so a re-run costs no requests, an interrupted run resumes, and
   the report never reaches the network. Delete a line to re-check that row;
   `--refresh` re-reads everything. **The cache is a snapshot**, and every row
@@ -460,7 +471,7 @@ the search URL it came from, and what Yandex actually returned.
 `v4_licences.csv` is the working file — 64 English columns in source order, one
 row per v4 record matched or not. `src/arkhinfra/v4_export.py`
 (`pixi run export-licences`) turns it into four XLSX files a reader can *check
-by eye*, in `data/processed/`:
+by eye*, in `data/processed/deliverables/`:
 
 - `v4_licences_alcohol_matched.xlsx` — 505 rows, alcohol objects holding a
   licence of their own;
@@ -509,7 +520,7 @@ where `category_orig` exactly names one of the seven classes, that assertion
 outranks anything inferred from `type_orig` or the fascia, and a `type`- or
 `name`-level flag for a *different* class is suppressed.
 
-- `pixi run build-taxonomy` → `data/processed/taxonomy_2022.csv` (7,263 × 40)
+- `pixi run build-taxonomy` → `data/processed/taxonomy_2022/taxonomy_2022.csv` (7,263 × 40)
   and `taxonomy_2022_summary.txt`. Read the summary for numbers; do not quote
   them from anywhere else.
 - `docs/taxonomy_2022_notes.md` — the field-level write-up.

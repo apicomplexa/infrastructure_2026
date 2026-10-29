@@ -5,8 +5,8 @@ numbers are reported, what they can and cannot support, and when the project
 should be declared a negative result.
 
 Every number below is either cited from the briefing or computed in this session
-from `data/processed/match_2022_local.csv`, `data/raw_v4/*.csv`,
-`data/processed/egais_licences_arkhangelsk.tsv` and `data/processed/v4_licences.csv`.
+from `data/processed/match_2022/match_2022_local.csv`, `data/raw_v4/*.csv`,
+`data/processed/egais/egais_licences_arkhangelsk.tsv` and `data/processed/v4_licences/v4_licences.csv`.
 
 ---
 

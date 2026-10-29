@@ -1,6 +1,6 @@
 """Check every alcohol object of the fourth delivery that holds no licence of its own on Yandex Maps.
 
-Reads `data/processed/v4_licences.csv` (written by `pixi run match-egais-v4`),
+Reads `data/processed/v4_licences/v4_licences.csv` (written by `pixi run match-egais-v4`),
 takes the alcohol rows whose `licence_status` is in `v4_egais.STATUS_NO_OWN` --
 `Taken`, `Other chain`, `Other trade` and `Not in registry` -- and asks Yandex
 Maps whether an organisation of that name stands at that address.  The status
@@ -40,9 +40,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from arkhinfra import v4_egais as mg  # noqa: E402
 from arkhinfra import v4_yandex as y  # noqa: E402
-from arkhinfra.paths import PROC  # noqa: E402
+from arkhinfra.paths import PROC_LICENCES  # noqa: E402
 
-MATCHED = PROC / "v4_licences.csv"
+MATCHED = PROC_LICENCES / "v4_licences.csv"
 
 # What the object was, then what Yandex said, then how it was decided.  The
 # order is the reading order of a manual reviewer: the row, the verdict, the

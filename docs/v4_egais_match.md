@@ -1,6 +1,6 @@
 # Fourth delivery x FSRAR licence registry: the object-level join
 
-`pixi run match-egais-v4` writes `data/processed/v4_licences.csv` — the whole
+`pixi run match-egais-v4` writes `data/processed/v4_licences/v4_licences.csv` — the whole
 fourth delivery (1,694 rows, both risk layers) with the licence answer appended
 to every record: is there a real alcohol licence at this address, is it in
 force, which one, and whose.
@@ -81,7 +81,7 @@ unchanged, and so is the per-address tally:
   old licence (Пятёрочка → ВинТорг, 2014).
 
 Fascia → holder pairs are **learned from the data** (`learn_brands()`, rule in
-`licmatch.brands`, table in `data/processed/v4_brand_aliases.csv`). The alcohol
+`licmatch.brands`, table in `data/processed/v4_licences/v4_brand_aliases.csv`). The alcohol
 layer is scored on the address and distance terms only. The outlets are then handed out
 one object each, and every fascia's assignments are fed back as a prior on the
 next round. That prior never counts the fascia's own address. A pair is kept when
@@ -214,7 +214,7 @@ scored as a zero. The coverage gap is concentrated in the archive: 98 % of
 
 ## The output
 
-`data/processed/v4_licences.csv` — semicolon-delimited, UTF-8 with BOM, like
+`data/processed/v4_licences/v4_licences.csv` — semicolon-delimited, UTF-8 with BOM, like
 every other CSV in this project. All 22 delivery columns and the `v4_common`
 derived ones, then:
 
@@ -241,7 +241,7 @@ describe the building, while `licence_status` and the licence columns describe
 the object. `licence_status` is a text value on purpose: the bare string `None`
 is read back as `NaN` by pandas.
 
-`data/processed/v4_licences_summary.txt` carries the same run's tables (Cyrillic
+`data/processed/v4_licences/v4_licences_summary.txt` carries the same run's tables (Cyrillic
 is written to a UTF-8 file rather than to the Windows console). `--calibrate`
 appends the threshold ladder and ten sampled matches per score band.
 
@@ -323,7 +323,7 @@ non-chain licence at their own address and should be checked by hand. Vape shops
 1 of 20 (was 16); hookah lounges, now matched against catering licences: 1 of 10.
 
 `pixi run python scripts/match_egais_v4.py --layer tobacco` writes the tobacco
-layer alone to `data/processed/v4_tobacco_licences.csv`; `--layer alcohol` does
+layer alone to `data/processed/v4_licences/v4_tobacco_licences.csv`; `--layer alcohol` does
 the same for the other. Both layers are always scored — the flag selects a view
 of one result, not a different one.
 
@@ -347,7 +347,7 @@ of one result, not a different one.
 ## The deliverable spreadsheets
 
 `pixi run export-licences` (`src/arkhinfra/v4_export.py`) turns the working CSV
-into four XLSX files in `data/processed/`, for a reader who has to check the
+into four XLSX files in `data/processed/deliverables/`, for a reader who has to check the
 join rather than query it:
 
 | File | Rows | What it holds |

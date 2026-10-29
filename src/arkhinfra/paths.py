@@ -27,6 +27,17 @@ RAW4 = DATA / "raw_v4"
 PROC = DATA / "processed"
 TILE_CACHE = DATA / "tile_cache"
 
+# Derived files, one subdirectory per pipeline that writes them.  File names
+# keep their pipeline prefix, so a file copied out of its folder still says
+# where it came from.
+PROC_EGAIS = PROC / "egais"                # parse-egais
+PROC_MATCH_2022 = PROC / "match_2022"      # match-2022
+PROC_TAXONOMY = PROC / "taxonomy_2022"     # build-taxonomy + its audit scripts
+PROC_LICENCES = PROC / "v4_licences"       # match-egais-v4
+PROC_YANDEX = PROC / "v4_yandex"           # check-yandex
+PROC_DELIVER = PROC / "deliverables"       # export-licences: the XLSX handed on
+PROC_ARCHIVE = PROC / "_archive"           # superseded outputs, kept for reference
+
 DOCS = ROOT / "docs"
 REPORTS = ROOT / "reports"
 
@@ -54,7 +65,7 @@ V4_ALCOHOL = RAW4 / "infrastructure_архангельск_2026-09-04_quality_ex
 # Alternative source: FSRAR consolidated licence registry (2026-07-01 snapshot).
 RAW_EGAIS = DATA / "raw_alter_egais"
 EGAIS_XML = RAW_EGAIS / "data-20260701t0000-structure-20190918t0000.xml"
-EGAIS_TSV = PROC / "egais_licences_arkhangelsk.tsv"
+EGAIS_TSV = PROC_EGAIS / "egais_licences_arkhangelsk.tsv"
 
 # Vendored packages that are not part of `arkhinfra` and must stay liftable out
 # of this repository.  `packages/licmatch` is the address-level record-linkage

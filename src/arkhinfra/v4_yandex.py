@@ -47,15 +47,15 @@ from datetime import date
 
 from rapidfuzz import fuzz
 
-from .paths import PROC, ensure_licmatch_path
+from .paths import PROC_YANDEX, ensure_licmatch_path
 
 ensure_licmatch_path()
 
 from licmatch import fascia_name, fold, haversine_m  # noqa: E402
 
-CACHE = PROC / "v4_yandex_cache.jsonl"
-OUT_CSV = PROC / "v4_alcohol_none_yandex.csv"
-OUT_TXT = PROC / "v4_alcohol_none_yandex_summary.txt"
+CACHE = PROC_YANDEX / "v4_yandex_cache.jsonl"
+OUT_CSV = PROC_YANDEX / "v4_alcohol_none_yandex.csv"
+OUT_TXT = PROC_YANDEX / "v4_alcohol_none_yandex_summary.txt"
 
 # Arkhangelsk is region 20 in Yandex's own URL space; the city prefix keeps an
 # unanchored query inside the city, and the URL is the one a person's browser

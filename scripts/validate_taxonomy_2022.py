@@ -7,8 +7,8 @@ taxonomy, and the change has to be *measured* rather than argued: three defects
 were fixed (D1-D3 of `docs/classifier_design.md` section 10) and the output
 shape changed from one label to seven booleans.  This script scores both rules
 against the only object-level benchmark this repository holds -- the 2022 study,
-joined to the export by `data/processed/match_2022_local.csv` -- and writes
-`data/processed/taxonomy_2022_validation.txt`.
+joined to the export by `data/processed/match_2022/match_2022_local.csv` -- and writes
+`data/processed/taxonomy_2022/taxonomy_2022_validation.txt`.
 
 It exists mainly to make the resulting table **impossible to mistake for a
 city-wide guarantee**.  The benchmark reaches 1,133 of 7,263 objects, in three
@@ -58,10 +58,10 @@ from scipy import stats  # noqa: E402
 
 from arkhinfra import taxonomy_2022 as tx  # noqa: E402
 from arkhinfra import v3_common as v3  # noqa: E402
-from arkhinfra.paths import PROC, V3_CSV  # noqa: E402
+from arkhinfra.paths import PROC_MATCH_2022, PROC_TAXONOMY, V3_CSV  # noqa: E402
 
-OUT_TXT = PROC / "taxonomy_2022_validation.txt"
-MATCH = PROC / "match_2022_local.csv"
+OUT_TXT = PROC_TAXONOMY / "taxonomy_2022_validation.txt"
+MATCH = PROC_MATCH_2022 / "match_2022_local.csv"
 
 # The 2022 study's three okrugs.  Everything else has no object-level benchmark.
 OKRUGS_2022 = set(v3.OKRUGS_2022)
@@ -220,7 +220,7 @@ def main() -> int:
     mod_mtime = dt.datetime.fromtimestamp(os.path.getmtime(mod_path))
     P("=" * 78)
     P("VALIDATION OF THE SEVEN-FLAG 2022 RULE (arkhinfra.taxonomy_2022)")
-    P("against the 2022 benchmark, via data/processed/match_2022_local.csv")
+    P("against the 2022 benchmark, via data/processed/match_2022/match_2022_local.csv")
     P("=" * 78)
     P("")
     P("rule under test : %s" % mod_path.name)
@@ -937,7 +937,7 @@ def main() -> int:
     stale = OUT_TXT.parent / "taxonomy_2022.csv"
     if stale.exists():
         if os.path.getmtime(stale) < os.path.getmtime(mod_path):
-            P("  5. STALE ARTEFACT. data/processed/taxonomy_2022.csv predates the")
+            P("  5. STALE ARTEFACT. data/processed/taxonomy_2022/taxonomy_2022/taxonomy_2022.csv predates the")
             P("     current arkhinfra/taxonomy_2022.py. Re-run")
             P("     scripts/build_taxonomy_2022.py before reading it or its")
             P("     summary; the counts in this file come from the module, not")
@@ -945,7 +945,7 @@ def main() -> int:
             P("")
     P("=" * 78)
 
-    PROC.mkdir(parents=True, exist_ok=True)
+    PROC_TAXONOMY.mkdir(parents=True, exist_ok=True)
     OUT_TXT.write_text(out.getvalue(), encoding="utf-8")
     print("wrote %s" % OUT_TXT)
     return 0

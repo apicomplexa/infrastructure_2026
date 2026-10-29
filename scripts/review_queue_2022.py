@@ -2,7 +2,7 @@
 
     pixi run python scripts/review_queue_2022.py
 
-Writes `data/processed/taxonomy_2022_review_queue.csv` and
+Writes `data/processed/taxonomy_2022/taxonomy_2022_review_queue.csv` and
 `taxonomy_2022_review_queue_summary.txt` beside it.
 
 **What this is for.**  The audit sample (`scripts/audit_sample_2022.py`) measures
@@ -57,10 +57,10 @@ import pandas as pd  # noqa: E402
 
 from arkhinfra import taxonomy_2022 as tx  # noqa: E402
 from arkhinfra import v3_common as v3  # noqa: E402
-from arkhinfra.paths import PROC  # noqa: E402
+from arkhinfra.paths import PROC_TAXONOMY  # noqa: E402
 
-OUT_CSV = PROC / "taxonomy_2022_review_queue.csv"
-OUT_TXT = PROC / "taxonomy_2022_review_queue_summary.txt"
+OUT_CSV = PROC_TAXONOMY / "taxonomy_2022_review_queue.csv"
+OUT_TXT = PROC_TAXONOMY / "taxonomy_2022_review_queue_summary.txt"
 
 BENCHMARKED = ("Lomonosovsky", "Oktyabrsky", "Maiskaya Gorka")
 
@@ -399,7 +399,7 @@ def write_csv(q: pd.DataFrame) -> None:
            "",
            "This queue is NOT a sample.  It is the tail of the distribution by",
            "construction, so no rate computed on it estimates anything about the",
-           "city.  For that use data/processed/taxonomy_2022_audit_sample.csv.",
+           "city.  For that use data/processed/taxonomy_2022/taxonomy_2022/taxonomy_2022_audit_sample.csv.",
            "",
            "entry reasons (any one puts a row on the queue):"]
     for name, (w, text) in ENTRY_REASONS.items():
@@ -417,7 +417,7 @@ def write_csv(q: pd.DataFrame) -> None:
     for line in pre:
         buf.write(("# " + line).rstrip() + "\n")
     q.to_csv(buf, sep=";", index=False, lineterminator="\n")
-    PROC.mkdir(parents=True, exist_ok=True)
+    PROC_TAXONOMY.mkdir(parents=True, exist_ok=True)
     OUT_CSV.write_text(buf.getvalue(), encoding="utf-8-sig")
 
 

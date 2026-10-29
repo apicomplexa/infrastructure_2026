@@ -18,7 +18,7 @@ You own the model: feature schema, algorithm choice, training, probability calib
 - Data is read through `arkhinfra.paths`, never through hand-built `../..` paths. Library code lives in `src/arkhinfra/`, runnable entry points in `scripts/`, reports in `analysis/`.
 - The main CSVs are `sep=";", encoding="utf-8-sig", low_memory=False`. Category values are Russian text.
 - Dependencies go through pixi (conda-forge) only. A new dependency must be justified and added to `pixi.toml` — never installed with pip.
-- `data/raw*` is read-only. Derived files are written to `data/processed/`.
+- `data/raw*` is read-only. Derived files are written to a subdirectory of `data/processed/` (one per pipeline, constants in `arkhinfra.paths`).
 
 ## Engineering principles that apply here
 

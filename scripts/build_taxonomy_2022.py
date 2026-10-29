@@ -2,7 +2,7 @@
 
     pixi run build-taxonomy
 
-Produces `data/processed/taxonomy_2022.csv` (7,263 rows: the export's own columns
+Produces `data/processed/taxonomy_2022/taxonomy_2022.csv` (7,263 rows: the export's own columns
 plus seven `is_<class>` flags, seven `<class>_evidence` columns, `is_sport_retail`,
 `n_classes` and `classes_2022`) and `taxonomy_2022_summary.txt` beside it.
 
@@ -21,10 +21,10 @@ import pandas as pd  # noqa: E402
 
 from arkhinfra import taxonomy_2022 as tx  # noqa: E402
 from arkhinfra import v3_common as v3  # noqa: E402
-from arkhinfra.paths import PROC  # noqa: E402
+from arkhinfra.paths import PROC_TAXONOMY  # noqa: E402
 
-OUT_CSV = PROC / "taxonomy_2022.csv"
-OUT_TXT = PROC / "taxonomy_2022_summary.txt"
+OUT_CSV = PROC_TAXONOMY / "taxonomy_2022.csv"
+OUT_TXT = PROC_TAXONOMY / "taxonomy_2022_summary.txt"
 
 
 def main() -> int:
@@ -92,7 +92,7 @@ def main() -> int:
     P("  category_orig override suppresses %d of %d rows (%.2f %%)"
       % (int(tx.overridden(d).sum()), len(d), 100 * tx.overridden(d).mean()))
 
-    PROC.mkdir(parents=True, exist_ok=True)
+    PROC_TAXONOMY.mkdir(parents=True, exist_ok=True)
     d.to_csv(OUT_CSV, sep=";", encoding="utf-8-sig", index=False)
     OUT_TXT.write_text(out.getvalue(), encoding="utf-8")
     print("wrote %s (%d rows) and %s" % (OUT_CSV.name, len(d), OUT_TXT.name))

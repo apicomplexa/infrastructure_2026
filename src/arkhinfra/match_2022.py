@@ -21,7 +21,7 @@ other's, so "Magnit" and "Magnit Cosmetic" score a perfect match; WRatio blends
 exact, partial and token comparisons with a length penalty and does not.
 token_set_ratio is still computed and stored so the choice can be audited.
 
-Run standalone with `pixi run match-2022`; writes to data/processed/.
+Run standalone with `pixi run match-2022`; writes to data/processed/match_2022/.
 """
 from __future__ import annotations
 
@@ -195,7 +195,7 @@ def reverse_coverage(target: pd.DataFrame, res: pd.DataFrame) -> pd.Series:
 
 
 def main() -> None:
-    c.PROC.mkdir(parents=True, exist_ok=True)
+    c.PROC_MATCH_2022.mkdir(parents=True, exist_ok=True)
     v3 = c.load_v3()
 
     local = c.load_ref_2022_local()
@@ -205,18 +205,18 @@ def main() -> None:
     res_vendor = match(vendor, v3)
 
     attach(local, res_local, v3).to_csv(
-        c.PROC / "match_2022_local.csv", sep=";", encoding="utf-8-sig", index=False)
+        c.PROC_MATCH_2022 / "match_2022_local.csv", sep=";", encoding="utf-8-sig", index=False)
     attach(vendor, res_vendor, v3).to_csv(
-        c.PROC / "match_2022_vendor.csv", sep=";", encoding="utf-8-sig", index=False)
+        c.PROC_MATCH_2022 / "match_2022_vendor.csv", sep=";", encoding="utf-8-sig", index=False)
     sensitivity(local, v3).to_csv(
-        c.PROC / "match_2022_sensitivity.csv", sep=";", encoding="utf-8-sig", index=False)
+        c.PROC_MATCH_2022 / "match_2022_sensitivity.csv", sep=";", encoding="utf-8-sig", index=False)
 
     lines = [
         f"radius={RADIUS_M} m, exact>={EXACT_THR}, probable>={PROBABLE_THR}",
         f"local etalon  : {recall(res_local)}",
         f"vendor etalon : {recall(res_vendor)}",
     ]
-    (c.PROC / "match_2022_summary.txt").write_text("\n".join(lines), encoding="utf-8")
+    (c.PROC_MATCH_2022 / "match_2022_summary.txt").write_text("\n".join(lines), encoding="utf-8")
     print("\n".join(lines))
 
 

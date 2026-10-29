@@ -14,7 +14,7 @@ Everything marked **[estimate]** is a judgement call with its basis stated.
 **0.1 `data/raw_v4/…_all.csv` and `V3_CSV` are the same file.** [verified]
 Both are 7,263 rows and their MD5 is identical
 (`949c075672028e13f212c9aa4c57d5c6`). So "the modern export" is one object table, and
-`data/processed/match_2022_local.csv` — produced by `pixi run match-2022` against
+`data/processed/match_2022/match_2022_local.csv` — produced by `pixi run match-2022` against
 `V3_CSV` — **already is the benchmark-to-export join this model needs.** No new matcher.
 `arkhinfra.paths` should gain `V4_ALL` as an alias pointing at the `raw_v4` copy with a
 comment recording the identity, and everything else should keep using `V3_CSV`.
@@ -289,7 +289,7 @@ This is a one-line bug that would be invisible in the metrics because it *helps*
 
 ### 2.4 External — EGAIS licences
 
-`data/processed/v4_licences.csv` has 59 columns, 1,694 rows, 1,335 distinct coordinates,
+`data/processed/v4_licences/v4_licences.csv` has 59 columns, 1,694 rows, 1,335 distinct coordinates,
 85.8 % of which land on an `_all.csv` object [verified]. Usable columns:
 `licence_status` (Active 1,120 / Archived 246 / Not in registry 328),
 `licence_n_active_retail`, `licence_activity_class`, `licence_addr_score`,

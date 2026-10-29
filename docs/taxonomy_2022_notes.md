@@ -27,7 +27,7 @@ What is shared (`norm_okrug`, `V3_CSV`) is imported, never copied.
 
 ## The output
 
-`data/processed/taxonomy_2022.csv` — **7,263 rows × 40 columns**, semicolon-delimited,
+`data/processed/taxonomy_2022/taxonomy_2022.csv` — **7,263 rows × 40 columns**, semicolon-delimited,
 UTF-8 with BOM like every other CSV here. The export's own 22 columns, then:
 
 | column | meaning |
@@ -39,7 +39,7 @@ UTF-8 with BOM like every other CSV here. The export's own 22 columns, then:
 | `n_classes` | 0–7, the number of flags set |
 | `classes_2022` | the set as text, `Grocery shops\|Tobacco outlets`; `Other (outside 2022 scheme)` when empty |
 
-`data/processed/taxonomy_2022_summary.txt` carries the same run's tables — class
+`data/processed/taxonomy_2022/taxonomy_2022_summary.txt` carries the same run's tables — class
 counts against the old rule, the evidence split, the multi-label pairs, the okrug
 matrix and the guard's verdict. Cyrillic goes to that file rather than to the
 Windows console. **Every number below comes from it or from the CSV; nothing is
@@ -274,7 +274,7 @@ looked like co-membership was a wrong `type_orig`.
   this file.
 - **No co-membership.** See above: 2 objects in 7,263. A grocery that sells tobacco
   is invisible to these fields; use `data/raw_v4/` and
-  `data/processed/v4_licences.csv` for that question, with the evidence tiers those
+  `data/processed/v4_licences/v4_licences.csv` for that question, with the evidence tiers those
   carry.
 - **No new objects, and no repair of `type_orig`.** It reclassifies the 7,263 rows
   of the third delivery and nothing else. D3 is *detected*, not fixed: the 35 rows
