@@ -78,6 +78,13 @@ always run tools through pixi:
   the three final-delivery cities → `data/processed/egais/egais_licences_final.tsv`
   (3,420 rows, same 27 columns; its Arkhangelsk rows equal the city TSV). The
   parser reads the ZIP directly (`EGAIS_ZIP`)
+- `pixi run match-egais-final` — final-delivery catering objects vs in-force
+  catering licences → `data/processed/final_egais/final_egais.csv` (+ `_summary.txt`)
+- `pixi run fetch-overture` — Overture Places snapshot for the three cities →
+  `data/raw_alter_overture/overture_places_<release>.parquet`
+- `pixi run confirm-final` — add «Подтверждено» / «Основания» to the final
+  delivery → `data/processed/final_confirm/*_подтверждено.xlsx`; offline by
+  default, `--yandex` queries Yandex Maps for the undecided objects (cached)
 
 The EDA is parameterised (`dataset: enriched | health`, a `parameters`-tagged
 cell) and needs **papermill** for `-P` injection. The health export has a
@@ -93,7 +100,7 @@ The workspace declares `win-64` and `linux-64`; the lock covers both.
 
 - Source data lives in `data/raw/` (first delivery, 2026-06-28), `data/raw_v2/`
   (second delivery, 2026-08-24), `data/raw_v3/` (third, 2026-08-31) and
-  `data/raw_v4/` (fourth, 2026-09-03/04), and is **read-only** — never modify it in place;
+  `data/raw_v4/` (fourth, 2026-09-03/04) and `data/raw_final/` (final, 2026-10-22…27), and is **read-only** — never modify it in place;
   write derived files elsewhere (e.g. a `data/processed/` you create).
 - `data/processed/` (git-ignored) has **one subdirectory per pipeline**, each
   with a constant in `arkhinfra.paths` — take paths from there, never write
@@ -103,7 +110,9 @@ The workspace declares `win-64` and `linux-64`; the lock covers both.
   validation scripts), `v4_licences/` (`PROC_LICENCES`, match-egais-v4: the
   join, its summary, the learned brand pairs, the frozen `_before_rules` copy),
   `v4_yandex/` (`PROC_YANDEX`, check-yandex and its cache), `deliverables/`
-  (`PROC_DELIVER`, the four XLSX of export-licences — the files handed on) and
+  (`PROC_DELIVER`, the four XLSX of export-licences — the files handed on),
+  `final_confirm/` (`PROC_CONFIRM`, confirm-final and its Yandex cache),
+  `final_egais/` (`PROC_FINAL_EGAIS`, match-egais-final) and
   `_archive/` (`PROC_ARCHIVE`, superseded outputs nothing reads: the
   pre-2026-09-23 `--layer` files). File names keep their pipeline prefix.
 - Only `data/raw/` is in git. `data/raw_v2/`, `data/raw_v3/` and `data/raw_v4/`
@@ -511,6 +520,83 @@ by eye*, in `data/processed/deliverables/`:
   report the same numbers.
 - `licence_products` is deliberately absent: the registry publishes the element
   empty in all 2,100 Arkhangelsk rows, and the legend says so.
+
+## Final delivery (`data/raw_final/`, 2026-10-22 … 27)
+
+The project's closing export: **one XLSX per city and object class**, three
+cities — Архангельск, **Северодвинск**, **Новодвинск** — and so far catering
+(`*_общепит.xlsx`) only. Listed by `arkhinfra.paths.final_files()`, never named,
+so a class added later is picked up. Git-ignored like the other payloads.
+Sheets: `data` (the deliverable: `OSM`, `GIS`, `Яндекс: найдено`,
+`Arkh_admin` source flags, then the object, then the contractor's Yandex
+check), `original_data`, `quality`, and summaries.
+
+- **A row is not an object.** One sign at one point is repeated under every
+  type it might be (кафе / ресторан / столовая / кулинария): Arkhangelsk 2,500
+  rows → 1,141 objects, Severodvinsk 905 → 467, Novodvinsk 195 → 80. Count
+  objects (`final_confirm.load()` → `entity`), not rows.
+- **`quality` is not row-aligned with `data`** — same counts, different order;
+  joined by position its `providers` disagree with OSM/GIS on most rows. It
+  joins exactly through `original_data` (row-aligned with `data`) on
+  `type_orig, name_orig, adress_orig, latitude, longitude`; `load()` checks
+  the join is 1:1 and agrees with OSM/GIS on every row.
+- **The contractor's Yandex «Найдено» confirms an address + category, not the
+  object** — the name matched in 190 of 407 Arkhangelsk rows («Tupperware»
+  found because «Йоко суши» shares the building). Re-judged by name from
+  `Яндекс: название`; never count the raw flag. Severodvinsk also has 238
+  rows «Не проверено».
+- The contractor's merge **missed OSM↔2GIS pairs** («1234» / «1234, кофейня»
+  14 m apart); `relink()` lends a provider across ≤ 50 m (20 m for a nameless
+  fascia) when the names agree, and says which record lent it.
+- The catering class holds **non-catering objects** (a construction firm, Fix
+  Price, «Магазин овощей и фруктов»). Confirmation says the object *exists*,
+  not that it is catering.
+
+`src/arkhinfra/final_confirm.py` (`pixi run confirm-final`) writes, per file, a
+copy with **«Подтверждено»** (1 = ≥ 2 independent sources among OSM, 2GIS,
+Yandex, Overture Places, the city register `Arkh_admin`, and an own FSRAR
+catering licence when `final_egais` has run) and **«Основания»** (per source: the OSM/2GIS record URL,
+the Yandex card, the lending record, the licence; after « || » what was looked
+for and not found) in front, the evidence columns appended, and a
+«Подтверждение» sheet with the legend and counts. Raw files are never touched;
+the contractor's own columns are left as delivered. Yandex is one source
+however reached; a card marked «Больше не работает» is never counted. Our
+Yandex check reuses `v4_yandex` (city-aware `search_url`, `generic=` override
+in `judge`); its cache is `data/processed/final_confirm/final_yandex_cache.jsonl`.
+Severodvinsk needs Yandex region path `10849/severodvinsk`; `/maps/search/`
+without a region answers 404; Novodvinsk resolves through Arkhangelsk's path.
+Run of 2026-10-29 (all 1,004 undecided objects read, 0 errors, then rebuilt
+offline with every source): **Архангельск 791 / 1,141 objects confirmed
+(69 %), Северодвинск 370 / 467 (79 %), Новодвинск 50 / 80 (63 %)**; our
+Yandex marks 500 present / 130 closed / 25 ambiguous / 349 absent. Read the
+summary file for numbers. ~17 % of objects are non-catering by name
+(«магазин», «компания», …) and are confirmed *more* often (87 % vs 69 %).
+
+**The licence registry as a source** (`src/arkhinfra/final_egais.py`,
+`match_catering()`): an in-force **catering** licence of the object's **own** at
+its address. Stricter than the v4 join — the name must always agree, with the
+holder or with the venue name the registry writes into the premises text of
+`outlet_address` («ресторан "Йоко"»); an address alone never confirms (malls,
+hotels, food courts). Word-level names with transliteration (`names_agree`),
+generic venue words excluded, one outlet (INN @ address @ venue) per venue, no
+brand learning (catering chains are franchises). Run of 2026-10-29: 58 of
+1,688 objects (Архангельск 34, Северодвинск 18, Новодвинск 6). Read
+`egais_match`, never a non-empty `egais_licence_no`: near-misses carry the
+licence their `egais_note` talks about.
+
+**Overture Places** (`pixi run fetch-overture` →
+`data/raw_alter_overture/overture_places_<release>.parquet`, read-only after
+download; release 2026-10-21.0: 2,214 places in the three cities' box — Meta
+1,523, AllThePlaces 480, Foursquare 200) is the one open POI layer independent
+of all three directories: its places theme has **no OSM**. All places are
+matched, not only catering (existence does not need Overture to agree on the
+kind): ≤ 150 m (60 m generic), confidence ≥ 0.5, name ≥ **85** — stricter than
+Yandex's 72 because AllThePlaces is chains and a same-brand branch is often
+nearest. Meta rows are Facebook pages, unmaintained from Russia since 2022 —
+the weaker kind; the dataset is named in «Основания». The env has no pyarrow,
+so parquet is read with duckdb. Foursquare OS Places direct (more FSQ rows) is
+gated behind a Hugging Face token; the Yandex organisation-search API is not an
+independent source and forbids storing answers.
 
 ## The 2022 taxonomy re-cut (`taxonomy_2022`)
 

@@ -24,6 +24,8 @@ RAW = DATA / "raw"
 RAW2 = DATA / "raw_v2"
 RAW3 = DATA / "raw_v3"
 RAW4 = DATA / "raw_v4"
+RAW_FINAL = DATA / "raw_final"
+RAW_OVERTURE = DATA / "raw_alter_overture"   # fetch-overture: Overture Places snapshot
 PROC = DATA / "processed"
 TILE_CACHE = DATA / "tile_cache"
 
@@ -36,6 +38,7 @@ PROC_TAXONOMY = PROC / "taxonomy_2022"     # build-taxonomy + its audit scripts
 PROC_LICENCES = PROC / "v4_licences"       # match-egais-v4
 PROC_YANDEX = PROC / "v4_yandex"           # check-yandex
 PROC_DELIVER = PROC / "deliverables"       # export-licences: the XLSX handed on
+PROC_CONFIRM = PROC / "final_confirm"      # confirm-final: the final export + "Подтверждено"
 PROC_ARCHIVE = PROC / "_archive"           # superseded outputs, kept for reference
 
 DOCS = ROOT / "docs"
@@ -61,6 +64,16 @@ V3_ARK = RAW3 / "ARKTMED_Arkhangelsk_2021-2026_all_categories_20260831_172749.xl
 # that are already in V3_CSV.
 V4_TOBACCO = RAW4 / "infrastructure_архангельск_2026-09-03_quality_excel табачное изделие.csv"
 V4_ALCOHOL = RAW4 / "infrastructure_архангельск_2026-09-04_quality_excel алкоголь.csv"
+
+# Final delivery (2026-10-22..27) -- one XLSX per city and object class,
+# three cities (Архангельск, Северодвинск, Новодвинск).  Listed, not named, so
+# a class added later is picked up without touching this file.
+def final_files(pattern: str = "infrastructure_*.xlsx") -> list[Path]:
+    files = sorted(RAW_FINAL.glob(pattern))
+    if not files:
+        raise FileNotFoundError(f"no {pattern} in {RAW_FINAL}")
+    return files
+
 
 # Alternative source: FSRAR consolidated licence registry (2026-07-01 snapshot).
 RAW_EGAIS = DATA / "raw_alter_egais"
@@ -97,3 +110,4 @@ EGAIS_ZIP = RAW_EGAIS / "data-20260701t0000-structure-20190918t0000.zip"
 # The same 27 columns as EGAIS_TSV over the three cities of the final delivery
 # (parse-egais-final).  A separate file, so the v4 join keeps its input.
 EGAIS_FINAL_TSV = PROC_EGAIS / "egais_licences_final.tsv"
+PROC_FINAL_EGAIS = PROC / "final_egais"    # match-egais-final: catering licences

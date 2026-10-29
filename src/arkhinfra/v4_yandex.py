@@ -61,6 +61,12 @@ OUT_TXT = PROC_YANDEX / "v4_alcohol_none_yandex_summary.txt"
 # unanchored query inside the city, and the URL is the one a person's browser
 # would show, so a reader can paste it and see what was read.
 CITY_PATH = "https://yandex.ru/maps/20/arkhangelsk/search/"
+# Other towns of the final delivery.  Yandex has no region-free search path
+# (`/maps/search/` answers 404); a town without a region of its own is reached
+# through Arkhangelsk's, which `ll` and the town named in the query then place
+# -- checked on Novodvinsk, whose objects resolve to their own cards.
+CITY_PATHS = {"Северодвинск": "https://yandex.ru/maps/10849/severodvinsk/search/"}
+HOME_CITY = "Архангельск"
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36")
 
@@ -119,12 +125,13 @@ STATUS_ORDER = [STATUS_PRESENT, STATUS_CLOSED, STATUS_AMBIGUOUS,
 LIMITED = re.compile(r"^\s*(?:<[^>]*>)*\s*limited\s*(?:<[^>]*>)*\s*$", re.I)
 
 
-def strip_city(address: str) -> str:
+def strip_city(address: str, city: str = HOME_CITY) -> str:
     """Drop the repeated city prefix: "Архангельск, улица Дрейера, 49" -> the rest."""
-    return re.sub(r"^\s*Архангельск,\s*", "", str(address)).strip()
+    return re.sub(rf"^\s*{re.escape(city)},\s*", "", str(address)).strip()
 
 
-def search_url(name: str, address: str, lat: float, lon: float) -> str:
+def search_url(name: str, address: str, lat: float, lon: float,
+               city: str = HOME_CITY) -> str:
     """The URL this check reads -- and the one to paste into a browser.
 
     Query and viewport both: the text is what a person would type, `ll` centres
@@ -133,8 +140,9 @@ def search_url(name: str, address: str, lat: float, lon: float) -> str:
     because neither the path nor `ll` binds a query Yandex cannot place: "Елена,
     улица Адмирала Макарова, 38" alone answers with a garden plot near Kirov.
     """
-    q = f"{name}, Архангельск, {strip_city(address)}".strip(" ,")
-    return (CITY_PATH + urllib.parse.quote(q, safe="")
+    q = f"{name}, {city}, {strip_city(address, city)}".strip(" ,")
+    path = CITY_PATHS.get(city, CITY_PATH)
+    return (path + urllib.parse.quote(q, safe="")
             + f"/?ll={lon:.6f}%2C{lat:.6f}&z=17")
 
 
@@ -369,7 +377,8 @@ def _score(cand: Candidate, name: str, lat: float, lon: float) -> tuple[float, f
             name_similarity(name, cand.name))
 
 
-def judge(answer: Answer, name: str, lat: float, lon: float) -> dict:
+def judge(answer: Answer, name: str, lat: float, lon: float, *,
+          generic: bool | None = None) -> dict:
     """Decide what the page says about *this* object.
 
     A candidate is taken only when it is both near enough and named alike; a
@@ -382,11 +391,15 @@ def judge(answer: Answer, name: str, lat: float, lon: float) -> dict:
     it is.  The nearest rejected candidate is kept in every negative case --
     for a row that comes out `absent`, what *does* stand there is the next
     thing a reader asks.
+
+    `generic` overrides `is_generic()` for a caller whose trade has other
+    nameless fascias -- "Столовая" is generic in catering, "Продукты" in retail.
     """
     orgs = [c for c in answer.candidates if not is_toponym(c)]
     scored = [(*_score(c, name, lat, lon), c) for c in orgs]
     scored.sort(key=lambda t: (t[0], -t[1]))
-    generic = is_generic(name)
+    if generic is None:
+        generic = is_generic(name)
     limit = GENERIC_M if generic else NEAR_M
 
     best = next((t for t in scored if t[0] <= limit and t[1] >= NAME_MIN), None)
@@ -411,13 +424,13 @@ def judge(answer: Answer, name: str, lat: float, lon: float) -> dict:
 
 
 def read(name: str, address: str, lat: float, lon: float, *,
-         sleep: tuple[float, float] = (2.5, 4.5)) -> dict:
+         sleep: tuple[float, float] = (2.5, 4.5), city: str = HOME_CITY) -> dict:
     """Read one object's page and return what it said -- no verdict, no opinion.
 
     This is the only function that touches the network, and its result is what
     the cache stores.
     """
-    url = search_url(name, address, lat, lon)
+    url = search_url(name, address, lat, lon, city)
     try:
         page = fetch(url)
     except RuntimeError as e:
@@ -430,13 +443,14 @@ def read(name: str, address: str, lat: float, lon: float, *,
             "checked": date.today().isoformat()}
 
 
-def verdict(rec: dict, name: str, lat: float, lon: float) -> dict:
+def verdict(rec: dict, name: str, lat: float, lon: float, *,
+            generic: bool | None = None) -> dict:
     """Judge one cached answer.  Costs nothing, so thresholds stay movable."""
     if rec.get("note"):
         return {"status": STATUS_ERROR, "yandex_name": "", "yandex_address": "",
                 "yandex_url": "", "yandex_distance_m": "", "yandex_name_sim": "",
                 "yandex_nearby": "", "address_found": False}
-    return judge(Answer.from_dict(rec), name, lat, lon)
+    return judge(Answer.from_dict(rec), name, lat, lon, generic=generic)
 
 
 def load_cache(path=CACHE) -> dict[str, dict]:
