@@ -2,7 +2,8 @@
 
 Reads each `data/raw_final/infrastructure_*.xlsx`, counts the sources of every
 *object* -- OSM, 2GIS, Yandex Maps, the city administration's register when
-`Arkh_admin` is filled -- and writes a copy of the workbook to
+`Arkh_admin` is filled, Overture, Foursquare, an own FSRAR licence -- and
+writes a copy of the workbook to
 `data/processed/final_confirm/` with «Подтверждено» as column A, the evidence
 appended after the contractor's columns, and a «Подтверждение» sheet saying how
 to read it.  The raw files are never touched.
@@ -77,22 +78,25 @@ def main(argv=None) -> int:
 
     cache = {} if args.refresh else y.load_cache(fc.CACHE)
     places = fc.load_overture()
+    fsq = fc.load_foursquare()
     registry = fe.load_registry() if EGAIS_FINAL_TSV.exists() else None
     print("ЕГАИС: " + (f"{len(registry):,} licences" if registry is not None
                        else "no extract (pixi run parse-egais-final) -- source skipped"))
     print("Overture: " + (f"{len(places):,} places" if places is not None
                           else "no snapshot (pixi run fetch-overture) -- source skipped"))
+    print("Foursquare: " + (f"{len(fsq):,} places" if fsq is not None
+                            else "no snapshot (pixi run fetch-foursquare) -- source skipped"))
     report, all_obj = [], []
     for path in final_files():
         df = fc.load(path)
         city = str(df["city"].iloc[0])
         print(f"{path.name}: {len(df):,} rows")
-        ob = fc.overture(fc.relink(fc.objects(df)), places)
+        ob = fc.exclusive(fc.foursquare(fc.overture(fc.relink(fc.objects(df)), places), fsq))
         if registry is not None:
             ob = ob.join(fe.match_catering(ob[["city", "name", "address", "lat", "lon"]], registry))
         if args.yandex and (not args.city or city == args.city):
             query_yandex(ob, cache, limit=args.limit, sleep=args.sleep, everything=args.all)
-        ob = fc.decide(fc.own_yandex(ob, cache))
+        ob = fc.decide(fc.profile(fc.own_yandex(ob, cache), cache))
         rows = fc.to_rows(df, ob)
         summary = fc.summarise(ob, rows)
         dst = PROC_CONFIRM / path.name.replace(".xlsx", "_подтверждено.xlsx")

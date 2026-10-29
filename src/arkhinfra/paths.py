@@ -26,6 +26,7 @@ RAW3 = DATA / "raw_v3"
 RAW4 = DATA / "raw_v4"
 RAW_FINAL = DATA / "raw_final"
 RAW_OVERTURE = DATA / "raw_alter_overture"   # fetch-overture: Overture Places snapshot
+RAW_FOURSQUARE = DATA / "raw_alter_foursquare"   # fetch-foursquare: FSQ OS Places snapshot
 PROC = DATA / "processed"
 TILE_CACHE = DATA / "tile_cache"
 

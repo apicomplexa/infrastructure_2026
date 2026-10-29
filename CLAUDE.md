@@ -82,6 +82,9 @@ always run tools through pixi:
   catering licences → `data/processed/final_egais/final_egais.csv` (+ `_summary.txt`)
 - `pixi run fetch-overture` — Overture Places snapshot for the three cities →
   `data/raw_alter_overture/overture_places_<release>.parquet`
+- `pixi run fetch-foursquare` — FSQ OS Places snapshot for the three cities →
+  `data/raw_alter_foursquare/fsq_places_<release>.parquet` (needs a saved
+  Hugging Face token; the dataset is gated)
 - `pixi run confirm-final` — add «Подтверждено» / «Основания» to the final
   delivery → `data/processed/final_confirm/*_подтверждено.xlsx`; offline by
   default, `--yandex` queries Yandex Maps for the undecided objects (cached)
@@ -554,7 +557,7 @@ check), `original_data`, `quality`, and summaries.
 
 `src/arkhinfra/final_confirm.py` (`pixi run confirm-final`) writes, per file, a
 copy with **«Подтверждено»** (1 = ≥ 2 independent sources among OSM, 2GIS,
-Yandex, Overture Places, the city register `Arkh_admin`, and an own FSRAR
+Yandex, Overture Places, Foursquare, the city register `Arkh_admin`, and an own FSRAR
 catering licence when `final_egais` has run) and **«Основания»** (per source: the OSM/2GIS record URL,
 the Yandex card, the lending record, the licence; after « || » what was looked
 for and not found) in front, the evidence columns appended, and a
@@ -566,8 +569,9 @@ in `judge`); its cache is `data/processed/final_confirm/final_yandex_cache.jsonl
 Severodvinsk needs Yandex region path `10849/severodvinsk`; `/maps/search/`
 without a region answers 404; Novodvinsk resolves through Arkhangelsk's path.
 Run of 2026-10-29 (all 1,004 undecided objects read, 0 errors, then rebuilt
-offline with every source): **Архангельск 791 / 1,141 objects confirmed
-(69 %), Северодвинск 370 / 467 (79 %), Новодвинск 50 / 80 (63 %)**; our
+offline with every source, Foursquare included): **Архангельск 803 / 1,141
+objects confirmed (70 %), Северодвинск 373 / 467 (80 %), Новодвинск 50 / 80
+(63 %)**; our
 Yandex marks 500 present / 130 closed / 25 ambiguous / 349 absent. Read the
 summary file for numbers. ~17 % of objects are non-catering by name
 («магазин», «компания», …) and are confirmed *more* often (87 % vs 69 %).
@@ -594,9 +598,44 @@ kind): ≤ 150 m (60 m generic), confidence ≥ 0.5, name ≥ **85** — stricte
 Yandex's 72 because AllThePlaces is chains and a same-brand branch is often
 nearest. Meta rows are Facebook pages, unmaintained from Russia since 2022 —
 the weaker kind; the dataset is named in «Основания». The env has no pyarrow,
-so parquet is read with duckdb. Foursquare OS Places direct (more FSQ rows) is
-gated behind a Hugging Face token; the Yandex organisation-search API is not an
+so parquet is read with duckdb. The Yandex organisation-search API is not an
 independent source and forbids storing answers.
+
+**Foursquare OS Places** direct (`pixi run fetch-foursquare` →
+`data/raw_alter_foursquare/fsq_places_<release>.parquet`; release 2026-10-15:
+15,788 places in the box against Overture's 200 FSQ rows). Since 2025-10 a
+**gated** Hugging Face dataset — the public S3 bucket is empty; the run needs
+an account that accepted the terms and a token saved by `hf auth login`
+(DuckDB's `credential_chain`), never one in the repo. The files are sorted
+spatially, so the box reads 2 of 776 row groups (~30 MB of 11.6 GB) — probe
+with `parquet_metadata` before pointing it at a new box. **The layer is
+stale here**: most records were last refreshed 2013–2016, so only a record
+refreshed since `FSQ_FRESH` (2022) and without `date_closed` counts; older
+matches are listed after « || », not counted. An Overture place built from
+Foursquare alone counts as Foursquare, never as a second source.
+`exclusive()` gives one Overture / FSQ record to the nearest claiming object
+and those within 50 m of it (the export's own unmerged duplicates), never to
+a same-name branch farther off (Hindi, Троицкий 61 vs 67). Run of 2026-10-29:
+261 objects counted, 184 found but stale/closed.
+
+**«Общепит?» — is the object catering at all** (`final_confirm.profile()`),
+the third front column. Four descriptions of the object's kind, none of them
+the contractor's class: the 2GIS descriptor after the comma in the name (or
+the bare name), Yandex's rubric for the very card our check matched (from the
+cached page title), the FSQ category of the found record (stale ones too — a
+kind does not go stale) and Overture's. `да` / `нет` / `противоречие` /
+`автомат` / `нет данных`, reasons in «Общепит: основания». Regex order is the
+rule: vending first, then `PROFILE_NOT_PLACE` (опт, оборудование, кафедра —
+«кафедра» starts with «кафе»), then catering words, then shop/company words.
+«Служба доставки» is neutral (in this class it is sushi and pizza). Run of
+2026-10-29 over 1,688 objects: 996 да, 351 нет, 33 противоречие, 79 автомат,
+229 нет данных; 294 of the 351 «нет» are *confirmed* — they exist, as shops.
+A flag for review, never a filter applied to the deliverable.
+
+**ФГИС Меркурий / Цербер is not reachable without an account**: the public
+parts are a VSD check by code and a site lookup by GUID; the other public
+Cerberus registers (export, pesticides, transit) hold no catering. Searching
+other enterprises needs a Mercury.ХС login of a registered business.
 
 ## The 2022 taxonomy re-cut (`taxonomy_2022`)
 

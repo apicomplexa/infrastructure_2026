@@ -33,6 +33,7 @@ export-licences = { cmd = "python scripts/export_licences_v4.py", description = 
 parse-egais-final = { cmd = "python scripts/parse_egais.py --settlements архангельск северодвинск новодвинск", description = "Stream the licence registry (ZIP) for the three final-delivery cities -> data/processed/egais/egais_licences_final.tsv" }
 match-egais-final = { cmd = "python scripts/match_egais_final.py", description = "Final-delivery catering objects vs in-force catering licences -> data/processed/final_egais/final_egais.csv" }
 fetch-overture = { cmd = "python scripts/fetch_overture.py", description = "Download Overture Maps Places around Arkhangelsk / Severodvinsk / Novodvinsk -> data/raw_alter_overture/overture_places_<release>.parquet" }
+fetch-foursquare = { cmd = "python scripts/fetch_foursquare.py", description = "Download FSQ OS Places (gated HF dataset; needs a saved HF token) around the three cities -> data/raw_alter_foursquare/fsq_places_<release>.parquet" }
 confirm-final = { cmd = "python scripts/confirm_final.py", description = "Add the «Подтверждено» column (2+ independent sources) to data/raw_final/*.xlsx -> data/processed/final_confirm/*_подтверждено.xlsx; --yandex to query Yandex Maps" }
 licmatch-test = { cmd = "python packages/licmatch/run_tests.py", description = "Run the licmatch (address-level record linkage) test suite" }
 build-taxonomy = { cmd = "python scripts/build_taxonomy_2022.py", description = "Write the seven independent 2022-class flags for the v3 export -> data/processed/taxonomy_2022/taxonomy_2022.csv" }
