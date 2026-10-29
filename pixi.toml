@@ -2,7 +2,7 @@
 authors = ["apicomplexa <aleksadr.kulish@gmail.com>"]
 channels = ["conda-forge"]
 name = "infrastructure_2026"
-platforms = ["win-64"]
+platforms = ["win-64", "linux-64"]
 version = "0.1.0"
 
 [tasks]
@@ -55,3 +55,4 @@ papermill = ">=2.7.0,<3"
 tabulate = ">=0.9"
 contextily = ">=1.6"
 rapidfuzz = ">=3.9"
+python-duckdb = ">=2.0.0,<3"

@@ -83,6 +83,7 @@ recodes objects into the 2022 seven-class health taxonomy (see `recode_2022()`).
 - `pixi run python <script>` — run any Python in the env
 
 PDF rendering needs a system LaTeX install (built with MiKTeX on Windows).
+The workspace declares `win-64` and `linux-64`; the lock covers both.
 
 ## Data conventions
 
